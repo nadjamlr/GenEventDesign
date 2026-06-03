@@ -1,3 +1,5 @@
+"use client";
+
 import Button from "./Button"
 import Slider from "./Slider"
 import Dropdown from "./Dropdown"
@@ -5,8 +7,11 @@ import Inputfield from "./Inputfield"
 import RulerItem from "./RulerItem"
 import RulerSection from "./RulerSection"
 import SeparationLine from "./SeperationLine"
+import useDesignStore from "@/store/designstore"
 
 export default function Sidebar() {
+  const { setColumns, setRows, setFormat } = useDesignStore();
+
   return (
     <div className="fixed top-0 right-0 h-screen w-72 bg-primary-white flex flex-col gap-6 px-5 py-5 overflow-y-auto">
       <h1 className="text-primary-color">
@@ -19,16 +24,17 @@ export default function Sidebar() {
             <Inputfield placeholder="1000" unit="H"/>
           </RulerItem>
           <RulerItem label="Format">
-            <Dropdown 
-                label="Choose"
-                fields={["Flyer", "Instagram", "Video"]}
+            <Dropdown
+              label="Choose"
+              fields={["Flyer", "Instagram", "Video"]}
+              onChange={setFormat}
             />
           </RulerItem>
           <RulerItem label="Columns">
-            <Slider range={5}/>
+            <Slider range={5} onChange={setColumns}/>
           </RulerItem>
           <RulerItem label="Rows">
-            <Slider range={4}/>
+            <Slider range={4} onChange={setRows}/>
           </RulerItem>
         </RulerSection>
 
