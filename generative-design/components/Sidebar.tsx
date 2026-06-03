@@ -31,10 +31,10 @@ export default function Sidebar() {
             />
           </RulerItem>
           <RulerItem label="Columns">
-            <Slider range={5} onChange={setColumns}/>
+            <Slider range={20} onChange={setColumns}/>
           </RulerItem>
           <RulerItem label="Rows">
-            <Slider range={4} onChange={setRows}/>
+            <Slider range={20} onChange={setRows}/>
           </RulerItem>
         </RulerSection>
 

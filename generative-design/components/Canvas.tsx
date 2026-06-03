@@ -18,10 +18,11 @@ export default function Canvas() {
 
     const instance = new p5((p: p5) => {
       p.setup = () => {
-        p.createCanvas(
+        const size = Math.min(
           containerRef.current!.clientWidth,
           containerRef.current!.clientHeight
         );
+        p.createCanvas(size, size);
       };
       p.draw = () => {
         drawGrid(p, paramsRef.current);
@@ -31,5 +32,5 @@ export default function Canvas() {
     return () => instance.remove();
   }, []);
 
-  return <div ref={containerRef} className="w-full h-full" />;
+  return <div ref={containerRef} className="w-full h-full overflow-hidden" />;
 }
