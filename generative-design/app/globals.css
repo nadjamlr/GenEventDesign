@@ -1,26 +1,44 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --primary-lightgrey: #EEEEEE;
+  --primary-darkgrey: #808080;
+  --primary-white: #ffffff;
+  --primary-black: #000000;
+  --primary-color: #2F00FF;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-primary-lightgrey: var(--primary-lightgrey);
+  --color-primary-darkgrey: var(--primary-darkgrey);
+  --color-primary-white: var(--primary-white);
+  --color-primary-black: var(--primary-black);
+  --color-primary-color: var(--primary-color);
+  --font-sans: var(--font-poppins), sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: var(--color-primary-grey);
+    --foreground: var(--color-primary-white);
   }
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-primary-grey);
+  color: var(--color-primary-white);
+  font-family: var(--font-poppins), sans-serif;
 }
+
+@layer base {
+  h1 {
+    @apply text-3lg font-medium md:text-4xl lg:text-3xl;
+  }
+  h2 {
+    @apply text-sm font-medium md:text-base;
+  }
+  h3 {
+    @apply text-[10px] font-normal md:text-xs;
+  }
+}
+
