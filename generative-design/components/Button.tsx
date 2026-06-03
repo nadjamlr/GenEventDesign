@@ -1,7 +1,7 @@
 type ButtonProps = {
   text: string;
   onClick?: () => void;
-  color?: "colored" | "white" | "black";
+  color?: "colored" | "white" | "grey";
   size?: "sm" | "md" | "lg";
   disabled?: boolean;
   type?: "button" | "submit" | "reset";
@@ -9,14 +9,14 @@ type ButtonProps = {
 
 const sizeClasses = {
   sm: "px-3 py-1 text-xs",
-  md: "px-5 py-2.5 text-base",
+  md: "px-4 py-2 text-base",
   lg: "px-7 py-3.5 text-lg",
 };
 
 const colorClasses = {
   colored: "bg-primary-color text-white hover:opacity-80",
   white: "bg-white text-black hover:opacity-80",
-  black: "bg-black text-white hover:opacity-80",
+  grey: "bg-primary-lightgrey text-primary-darkgrey hover:opacity-80",
 };
 
 export default function Button({
@@ -35,7 +35,7 @@ export default function Button({
       className={`
         ${sizeClasses[size]}
         ${colorClasses[color]}
-        font-semibold rounded-full transition-opacity
+        w-fit font-semibold rounded-sm transition-opacity
         disabled:opacity-40 disabled:cursor-not-allowed
       `}
     >

@@ -9,10 +9,9 @@ export default function RulerSection({heading, children}: RulerSectionProps) {
         <div className="flex flex-col gap-2">
             <h2 className="flex flex-row text-primary-black">
                 {heading}</h2>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-0">
                 {children}
             </div>
-
         </div>
     )
 }

@@ -13,7 +13,7 @@ export default function Sidebar() {
   const { setColumns, setRows, setFormat } = useDesignStore();
 
   return (
-    <div className="fixed top-0 right-0 h-screen w-72 bg-primary-white flex flex-col gap-6 px-5 py-5 overflow-y-auto">
+    <div className="fixed top-0 right-0 h-screen w-72 bg-primary-white flex flex-col gap-6 px-5 py-8 overflow-y-auto">
       <h1 className="text-primary-color">
         Brandify
       </h1>
@@ -45,7 +45,18 @@ export default function Sidebar() {
             <Inputfield />
           </RulerItem>
           <RulerItem label="Media">
-            <Button text="Upload" />
+            <Button text="Upload" color="grey" />
+          </RulerItem>
+        </RulerSection>
+
+        <SeparationLine/>
+
+        <RulerSection heading="Colors">
+          <RulerItem label="Text">
+            <Inputfield />
+          </RulerItem>
+          <RulerItem label="Media">
+            <Button text="Upload" color="grey" />
           </RulerItem>
         </RulerSection>
 
@@ -54,14 +65,16 @@ export default function Sidebar() {
         <RulerSection heading="Shape" />
 
         <SeparationLine/>
-
-        <RulerSection heading="Colors" />
-
-        <SeparationLine/>
         
         <RulerSection heading="Export">
-          <Button text="Export" />
+          <RulerItem label="Name">
+            <Inputfield placeholder="Name"/>
+          </RulerItem>
         </RulerSection>
+        
+        <div className="flex flex-col w-full items-center">
+          <Button size="sm" text="Export" />
+        </div>
         
       </div>
     </div>
