@@ -7,7 +7,7 @@ import Inputfield from "./Inputfield"
 import RulerItem from "./RulerItem"
 import RulerSection from "./RulerSection"
 import SeparationLine from "./SeperationLine"
-import useDesignStore from "@/store/designstore"
+import useDesignStore from "@/store/designStore"
 
 export default function Sidebar() {
   const { setColumns, setRows, setFormat } = useDesignStore();
