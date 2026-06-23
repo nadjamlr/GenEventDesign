@@ -15,11 +15,8 @@ export default function Sidebar() {
   const { setColumns, setRows, setFormat, selectedShapes, toggleShape } = useDesignStore();
 
   return (
-    <div className="fixed top-0 right-0 h-screen w-72 bg-primary-white flex flex-col gap-6 px-5 py-8 overflow-y-auto">
-      <img src="/logoShapes/Logo_NRLY_Black.svg" alt="NRLY" className="h-6 w-auto" />
-      <h1 className="text-primary-color">
-        NRLY
-      </h1>
+    <div className="fixed top-0 right-0 h-screen w-72 bg-primary-black flex flex-col gap-6 px-5 py-8 overflow-y-auto">
+      <img src="/logoShapes/Logo_NRLY_White.svg" alt="NRLY" className="h-8 w-auto" />
       <div className="flex flex-col gap-6">
         <RulerSection heading="Format">
           <RulerItem label="Size">
@@ -29,7 +26,7 @@ export default function Sidebar() {
           <RulerItem label="Format">
             <Dropdown
               label="Choose"
-              fields={["Flyer", "Instagram", "Video"]}
+              fields={["Social Post", "Poster", "Flyer", "Video", "Business Card", "Ticket", "Voucher", "Sticker", "Skateboard"]}
               onChange={setFormat}
             />
           </RulerItem>
