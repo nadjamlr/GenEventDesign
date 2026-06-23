@@ -13,6 +13,7 @@ type DesignStore = {
   selectedShapes: string[];
   customColors: string[];
   selectedColors: string[];
+  seed: number;
   setColumns: (v: number) => void;
   setRows: (v: number) => void;
   setFormat: (v: string) => void;
@@ -22,6 +23,7 @@ type DesignStore = {
   toggleShape: (id: string) => void;
   toggleColor: (hex: string) => void;
   addCustomColor: (hex: string) => void;
+  regenerate: () => void;
 };
 
 const useDesignStore = create<DesignStore>((set) => ({
@@ -35,6 +37,7 @@ const useDesignStore = create<DesignStore>((set) => ({
   selectedShapes: [],
   customColors: [],
   selectedColors: [],
+  seed: Math.floor(Math.random() * 1e9),
   setColumns: (v) => set({ columns: v }),
   setRows: (v) => set({ rows: v }),
   setFormat: (v) =>
@@ -71,6 +74,7 @@ const useDesignStore = create<DesignStore>((set) => ({
           : [...state.selectedColors, hex],
       };
     }),
+  regenerate: () => set({ seed: Math.floor(Math.random() * 1e9) }),
 }));
 
 export default useDesignStore;

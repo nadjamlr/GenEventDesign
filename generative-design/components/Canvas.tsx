@@ -9,7 +9,7 @@ import { shapes } from "@/lib/shapes";
 
 export default function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { columns, rows, width, height, cornerRadius, selectedShapes, selectedColors } =
+  const { columns, rows, width, height, cornerRadius, selectedShapes, selectedColors, seed } =
     useDesignStore();
 
   // ref hält immer die aktuellen Werte, ohne p5 neu erstellen zu müssen
@@ -21,6 +21,7 @@ export default function Canvas() {
     cornerRadius,
     selectedShapes,
     selectedColors,
+    seed,
   });
   paramsRef.current = {
     columns,
@@ -30,6 +31,7 @@ export default function Canvas() {
     cornerRadius,
     selectedShapes,
     selectedColors,
+    seed,
   };
 
   useEffect(() => {
@@ -124,14 +126,22 @@ export default function Canvas() {
     }, containerRef.current);
 
     exportRegistry.render = () => {
-      const { columns, rows, width, height, cornerRadius, selectedShapes, selectedColors } =
+      const { columns, rows, width, height, cornerRadius, selectedShapes, selectedColors, seed } =
         paramsRef.current;
       const gfx = instance.createGraphics(width, height);
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
         getImage: (id, colorHex) => getTintedImage(instance, id, colorHex),
       };
-      drawGrid(gfx, { columns, rows, cornerRadius, selectedShapes, selectedColors, shapeImages });
+      drawGrid(gfx, {
+        columns,
+        rows,
+        cornerRadius,
+        selectedShapes,
+        selectedColors,
+        shapeImages,
+        seed,
+      });
       const dataUrl = (gfx.elt as HTMLCanvasElement).toDataURL("image/png");
       gfx.remove();
       return { dataUrl, width, height };

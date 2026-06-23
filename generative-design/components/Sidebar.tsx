@@ -37,6 +37,7 @@ export default function Sidebar() {
     selectedColors,
     toggleColor,
     addCustomColor,
+    regenerate,
   } = useDesignStore();
 
   const [hexInput, setHexInput] = useState("");
@@ -151,6 +152,9 @@ export default function Sidebar() {
                 onClick={() => toggleShape(shape.id)}
               />
             ))}
+          </div>
+          <div className="flex flex-col w-full items-center px-2 mt-2">
+            <Button size="sm" text="Shuffle" color="grey" onClick={regenerate} />
           </div>
         </RulerSection>
 

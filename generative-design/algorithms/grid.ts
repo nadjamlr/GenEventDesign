@@ -12,9 +12,11 @@ type Params = {
   selectedShapes?: string[];
   selectedColors?: string[];
   shapeImages?: ShapeImageProvider;
+  seed?: number;
 };
 
 const MARGIN_RATIO = 0.05; // Rand relativ zur kürzeren Kantenlänge
+const BLEED_RATIO = 0.18; // wie weit Elemente über den Rand hinausragen dürfen
 const FALLBACK_COLOR = "#2F00FF"; // primary-color, falls keine Farbe ausgewählt ist
 
 function hashString(str: string): number {
@@ -27,7 +29,7 @@ function hashString(str: string): number {
 }
 
 // Einfacher seeded PRNG (LCG), damit das Muster bei gleichen Parametern
-// stabil bleibt, sich aber ändert, sobald Shapes/Colors/Grid sich ändern.
+// stabil bleibt, sich aber ändert, sobald Shapes/Colors/Grid/Seed sich ändern.
 function createRng(seed: number) {
   let state = seed || 1;
   return function rng() {
@@ -35,6 +37,16 @@ function createRng(seed: number) {
     return (state >>> 0) / 4294967296;
   };
 }
+
+type Instance = {
+  cx: number;
+  cy: number;
+  size: number;
+  shapeId?: string;
+  colorHex: string;
+  angle: number;
+  flip: number;
+};
 
 // Hier schreibst du deinen Algorithmus.
 // p5 ist die p5.js Instanz, params kommen aus dem Store.
@@ -46,6 +58,7 @@ export function drawGrid(p5: p5Types, params: Params) {
     selectedShapes = [],
     selectedColors = [],
     shapeImages,
+    seed: seedParam = 0,
   } = params;
 
   p5.background(255); // Frame hat immer einen weißen Hintergrund
@@ -62,57 +75,67 @@ export function drawGrid(p5: p5Types, params: Params) {
   p5.strokeWeight(1);
   p5.rect(innerX, innerY, innerW, innerH, innerRadius);
 
-  const cellW = innerW / columns;
-  const cellH = innerH / rows;
-
-  // Nur Shapes verwenden, deren Bild bereits geladen ist.
   const availableShapes = shapeImages
     ? selectedShapes.filter((id) => shapeImages.isReady(id))
     : [];
+
   const seed = hashString(
-    `${columns}x${rows}|${availableShapes.join(",")}|${selectedColors.join(",")}`
+    `${seedParam}|${columns}x${rows}|${availableShapes.join(",")}|${selectedColors.join(",")}`
   );
   const rng = createRng(seed);
 
-  for (let col = 0; col < columns; col++) {
-    for (let row = 0; row < rows; row++) {
-      const cx = innerX + col * cellW + cellW / 2;
-      const cy = innerY + row * cellH + cellH / 2;
+  // Spalten/Zeilen-Regler steuern jetzt die Dichte der frei gestreuten
+  // Elemente statt fixer Zellen.
+  const count = Math.max(1, columns * rows);
+  const baseUnit = Math.sqrt((innerW * innerH) / count);
+  const bleedX = innerW * BLEED_RATIO;
+  const bleedY = innerH * BLEED_RATIO;
 
-      const colorHex =
-        selectedColors.length > 0
-          ? selectedColors[Math.floor(rng() * selectedColors.length)]
-          : FALLBACK_COLOR;
-
-      const shapeId =
+  const instances: Instance[] = [];
+  for (let i = 0; i < count; i++) {
+    // rng()**2 bevorzugt kleinere Elemente, mit gelegentlichen großen
+    // Ausreißern – organischer als eine Gleichverteilung.
+    const scale = 0.5 + rng() ** 2 * 2.5;
+    instances.push({
+      cx: innerX - bleedX + rng() * (innerW + bleedX * 2),
+      cy: innerY - bleedY + rng() * (innerH + bleedY * 2),
+      size: baseUnit * scale,
+      shapeId:
         availableShapes.length > 0
           ? availableShapes[Math.floor(rng() * availableShapes.length)]
-          : undefined;
-      const img = shapeId && shapeImages ? shapeImages.getImage(shapeId, colorHex) : undefined;
+          : undefined,
+      colorHex:
+        selectedColors.length > 0
+          ? selectedColors[Math.floor(rng() * selectedColors.length)]
+          : FALLBACK_COLOR,
+      angle: rng() * p5.TWO_PI,
+      flip: rng() > 0.5 ? -1 : 1,
+    });
+  }
 
-      if (!img) {
-        // Platzhalter, solange keine Shapes ausgewählt/geladen sind.
-        p5.noStroke();
-        p5.fill(colorHex);
-        p5.ellipse(cx, cy, cellW * 0.6, cellH * 0.6);
-        continue;
-      }
+  // Größte Elemente zuerst (liegen unten), kleinere obenauf – sorgt für
+  // Tiefe in den Überlappungen statt zufälligem Gewusel.
+  instances.sort((a, b) => b.size - a.size);
 
-      const sizeJitter = 0.55 + rng() * 0.35; // 55–90% der kürzeren Zellkante
-      const maxDim = Math.min(cellW, cellH) * sizeJitter;
-      const fit = Math.min(maxDim / img.width, maxDim / img.height);
-      const drawW = img.width * fit;
-      const drawH = img.height * fit;
-      const angle = Math.floor(rng() * 4) * p5.HALF_PI; // 0/90/180/270°
-      const flip = rng() > 0.5 ? -1 : 1;
+  for (const inst of instances) {
+    const img =
+      inst.shapeId && shapeImages ? shapeImages.getImage(inst.shapeId, inst.colorHex) : undefined;
 
-      p5.push();
-      p5.translate(cx, cy);
-      p5.rotate(angle);
-      p5.scale(flip, 1);
+    p5.push();
+    p5.translate(inst.cx, inst.cy);
+    p5.rotate(inst.angle);
+    p5.scale(inst.flip, 1);
+
+    if (img) {
+      const fit = Math.min(inst.size / img.width, inst.size / img.height);
       p5.imageMode(p5.CENTER);
-      p5.image(img, 0, 0, drawW, drawH);
-      p5.pop();
+      p5.image(img, 0, 0, img.width * fit, img.height * fit);
+    } else {
+      p5.noStroke();
+      p5.fill(inst.colorHex);
+      p5.ellipse(0, 0, inst.size, inst.size);
     }
+
+    p5.pop();
   }
 }
