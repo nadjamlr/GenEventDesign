@@ -32,7 +32,7 @@ body {
 
 @layer base {
   h1 {
-    @apply text-3lg font-medium md:text-4xl lg:text-3xl;
+    @apply text-3xl font-medium md:text-4xl lg:text-3xl;
   }
   h2 {
     @apply text-sm font-medium md:text-base;
