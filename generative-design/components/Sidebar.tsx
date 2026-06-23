@@ -7,15 +7,18 @@ import Inputfield from "./Inputfield"
 import RulerItem from "./RulerItem"
 import RulerSection from "./RulerSection"
 import SeparationLine from "./SeperationLine"
-import useDesignStore from "@/store/designstore"
+import ShapeButton from "./ShapeButton"
+import useDesignStore from "@/store/designStore"
+import { shapes } from "@/lib/shapes"
 
 export default function Sidebar() {
-  const { setColumns, setRows, setFormat } = useDesignStore();
+  const { setColumns, setRows, setFormat, selectedShapes, toggleShape } = useDesignStore();
 
   return (
     <div className="fixed top-0 right-0 h-screen w-72 bg-primary-white flex flex-col gap-6 px-5 py-8 overflow-y-auto">
+      <img src="/logoShapes/Logo_NRLY_Black.svg" alt="NRLY" className="h-6 w-auto" />
       <h1 className="text-primary-color">
-        Brandify
+        NRLY
       </h1>
       <div className="flex flex-col gap-6">
         <RulerSection heading="Format">
@@ -62,7 +65,19 @@ export default function Sidebar() {
 
         <SeparationLine/>
 
-        <RulerSection heading="Shape" />
+        <RulerSection heading="Shape">
+          <div className="grid grid-cols-3 gap-2 px-2">
+            {shapes.map((shape) => (
+              <ShapeButton
+                key={shape.id}
+                label={shape.label}
+                src={shape.src}
+                selected={selectedShapes.includes(shape.id)}
+                onClick={() => toggleShape(shape.id)}
+              />
+            ))}
+          </div>
+        </RulerSection>
 
         <SeparationLine/>
         
