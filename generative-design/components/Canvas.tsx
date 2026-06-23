@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import p5 from "p5";
-import useDesignStore from "@/store/designStore";
+import useDesignStore from "@/store/designstore";
 import { drawGrid } from "@/algorithms/grid";
 
 export default function Canvas() {
