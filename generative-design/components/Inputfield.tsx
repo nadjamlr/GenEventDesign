@@ -5,18 +5,27 @@ import { useState } from "react";
 type InputfieldProps = {
   unit?: string;
   placeholder?: string;
+  value?: string;
   onChange?: (value: string) => void;
+  onEnter?: (value: string) => void;
 };
 
-export default function Inputfield({ unit, placeholder, onChange }: InputfieldProps) {
-  const [value, setValue] = useState("");
+export default function Inputfield({ unit, placeholder, value: controlledValue, onChange, onEnter }: InputfieldProps) {
+  const [internalValue, setInternalValue] = useState("");
+  const value = controlledValue ?? internalValue;
   const isNumber = !!unit;
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const raw = e.target.value;
     if (isNumber && raw !== "" && !/^\d*$/.test(raw)) return;
-    setValue(raw);
+    setInternalValue(raw);
     onChange?.(raw);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      onEnter?.(value);
+    }
   }
 
   return (
@@ -24,6 +33,7 @@ export default function Inputfield({ unit, placeholder, onChange }: InputfieldPr
       <input
         value={value}
         onChange={handleChange}
+        onKeyDown={handleKeyDown}
         inputMode={isNumber ? "numeric" : "text"}
         placeholder={placeholder ?? (isNumber ? "0" : "...")}
         className="w-full bg-transparent text-primary-black text-xs outline-none placeholder:text-primary-darkgrey"
