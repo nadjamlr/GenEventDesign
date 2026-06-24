@@ -12,6 +12,11 @@ import {
 import { exportRegistry } from "@/lib/canvasExport";
 import { shapes } from "@/lib/shapes";
 import type { AreaDef } from "@/lib/areas";
+import { hasSides, getSideLayout } from "@/lib/formats";
+import { getGoogleFontUrl } from "@/lib/fonts";
+import { TEXT_STYLES } from "@/lib/textStyles";
+
+const STACK_GAP_RATIO = 0.04; // Abstand zwischen Vorder- und Rückseite, relativ zur Seitenhöhe
 
 export default function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -28,6 +33,8 @@ export default function Canvas() {
     areas,
     inputValues,
     side,
+    logoEnabled,
+    logoMode,
   } = useDesignStore();
 
   // ref hält immer die aktuellen Werte, ohne p5 neu erstellen zu müssen
@@ -44,6 +51,8 @@ export default function Canvas() {
     areas,
     inputValues,
     side,
+    logoEnabled,
+    logoMode,
   });
   paramsRef.current = {
     columns,
@@ -58,20 +67,32 @@ export default function Canvas() {
     areas,
     inputValues,
     side,
+    logoEnabled,
+    logoMode,
   };
 
   useEffect(() => {
     if (!containerRef.current) return;
 
     function fittedSize() {
-      const { width, height, cornerRadius } = paramsRef.current;
+      const { width, height, cornerRadius, format } = paramsRef.current;
+      const stacked = hasSides(format);
+      const layout = getSideLayout(format);
+      const gap = stacked ? (layout === "row" ? width : height) * STACK_GAP_RATIO : 0;
+      const totalW = stacked && layout === "row" ? width * 2 + gap : width;
+      const totalH = stacked && layout === "column" ? height * 2 + gap : height;
       const maxW = containerRef.current!.clientWidth;
       const maxH = containerRef.current!.clientHeight;
-      const scale = Math.min(maxW / width, maxH / height);
+      const scale = Math.min(maxW / totalW, maxH / totalH);
       return {
-        w: Math.round(width * scale),
-        h: Math.round(height * scale),
+        w: Math.round(totalW * scale),
+        h: Math.round(totalH * scale),
+        sideW: Math.round(width * scale),
+        sideH: Math.round(height * scale),
+        gap: gap * scale,
         cornerRadius: cornerRadius * scale,
+        stacked,
+        layout,
       };
     }
 
@@ -201,6 +222,41 @@ export default function Canvas() {
       return pImg;
     }
 
+    // Bei Formaten mit Vorder-/Rückseite werden beide Seiten in eigene
+    // Offscreen-Graphics gezeichnet und dann untereinander auf das
+    // sichtbare Canvas komponiert.
+    let frontGfx: p5.Graphics | undefined;
+    let backGfx: p5.Graphics | undefined;
+
+    // Google Font (siehe lib/fonts.ts) wird pro benötigtem Weight einzeln
+    // geladen (siehe lib/textStyles.ts für die verwendeten Weights). Cache ist
+    // nach der vollen URL (statt nur nach Weight) geschlüsselt, damit ein
+    // Wechsel der Schriftart in lib/fonts.ts auch ohne Hard-Reload greift.
+    const WEIGHTS = [...new Set(Object.values(TEXT_STYLES).map((s) => s.weight))];
+    const fontCache = new Map<string, p5.Font>();
+    const loadingUrls = new Set<string>();
+
+    function ensureFontWeightLoaded(p: p5, weight: number) {
+      const url = getGoogleFontUrl(weight);
+      if (fontCache.has(url) || loadingUrls.has(url)) return;
+      loadingUrls.add(url);
+      p.loadFont(
+        url,
+        (font) => {
+          fontCache.set(url, font);
+          loadingUrls.delete(url);
+        },
+        () => {
+          loadingUrls.delete(url);
+        }
+      );
+    }
+
+    function getFontProvider(p: p5) {
+      for (const weight of WEIGHTS) ensureFontWeightLoaded(p, weight);
+      return (weight: number) => fontCache.get(getGoogleFontUrl(weight));
+    }
+
     const instance = new p5((p: p5) => {
       let canvasElt: HTMLElement;
 
@@ -216,15 +272,23 @@ export default function Canvas() {
         const { w, h, cornerRadius } = fittedSize();
         canvasElt = p.createCanvas(w, h).elt;
         canvasElt.style.borderRadius = `${cornerRadius}px`;
+        logoImages.logo = {};
+        logoImages.icon = {};
         loadLogoVariant(p, "/logoShapes/Logo_NRLY_Black.svg", (img) => {
-          logoImages.black = img;
+          logoImages.logo!.black = img;
         });
         loadLogoVariant(p, "/logoShapes/Logo_NRLY_White.svg", (img) => {
-          logoImages.white = img;
+          logoImages.logo!.white = img;
+        });
+        loadLogoVariant(p, "/logoShapes/Logo_NRLY_Icon_Black.png", (img) => {
+          logoImages.icon!.black = img;
+        });
+        loadLogoVariant(p, "/logoShapes/Logo_NRLY_Icon_White.svg", (img) => {
+          logoImages.icon!.white = img;
         });
       };
       p.draw = () => {
-        const { w, h, cornerRadius } = fittedSize();
+        const { w, h, sideW, sideH, gap, stacked, layout, cornerRadius } = fittedSize();
         if (p.width !== w || p.height !== h) {
           p.resizeCanvas(w, h);
         }
@@ -234,7 +298,28 @@ export default function Canvas() {
           .map((a) => a.shapeId);
         ensureRawLoaded([...paramsRef.current.selectedShapes, ...areaShapeIds]);
         ensureAreaPhotosLoaded(paramsRef.current.areas);
-        drawGrid(p, { ...paramsRef.current, cornerRadius, shapeImages, logoImages, areaImages });
+        const fontProvider = getFontProvider(p);
+
+        if (stacked) {
+          if (!frontGfx || frontGfx.width !== sideW || frontGfx.height !== sideH) {
+            frontGfx?.remove();
+            backGfx?.remove();
+            frontGfx = p.createGraphics(sideW, sideH);
+            backGfx = p.createGraphics(sideW, sideH);
+          }
+          drawGrid(frontGfx!, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, side: "front" });
+          drawGrid(backGfx!, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, side: "back" });
+          p.clear();
+          p.imageMode(p.CORNER);
+          p.image(frontGfx!, 0, 0, sideW, sideH);
+          if (layout === "row") {
+            p.image(backGfx!, sideW + gap, 0, sideW, sideH);
+          } else {
+            p.image(backGfx!, 0, sideH + gap, sideW, sideH);
+          }
+        } else {
+          drawGrid(p, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider });
+        }
       };
     }, containerRef.current);
 
@@ -244,7 +329,6 @@ export default function Canvas() {
         rows,
         width,
         height,
-        cornerRadius,
         selectedShapes,
         selectedColors,
         seed,
@@ -252,6 +336,8 @@ export default function Canvas() {
         areas,
         inputValues,
         side,
+        logoEnabled,
+        logoMode,
       } = paramsRef.current;
       const gfx = instance.createGraphics(width, height);
       const shapeImages: ShapeImageProvider = {
@@ -264,16 +350,18 @@ export default function Canvas() {
       drawGrid(gfx, {
         columns,
         rows,
-        cornerRadius,
         selectedShapes,
         selectedColors,
         shapeImages,
         seed,
         format,
         logoImages,
+        logoEnabled,
+        logoMode,
         areas,
         areaImages,
         inputValues,
+        fontProvider: getFontProvider(instance),
         side: overrideSide ?? side,
       });
       const dataUrl = (gfx.elt as HTMLCanvasElement).toDataURL("image/png");
@@ -283,6 +371,8 @@ export default function Canvas() {
 
     return () => {
       exportRegistry.render = null;
+      frontGfx?.remove();
+      backGfx?.remove();
       instance.remove();
     };
   }, []);

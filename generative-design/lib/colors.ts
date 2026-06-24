@@ -5,7 +5,7 @@ export type ColorDef = {
 
 export const DEFAULT_COLORS: ColorDef[] = [
   { id: "primary-blue", hex: "#355CD0" },
-  { id: "secondary-blue-grey", hex: "#C4C8CE" },
+  { id: "secondary-grey", hex: "#1C1F22" },
   { id: "secondary-yellow", hex: "#F2D974" },
   { id: "secondary-senf", hex: "#FFAD01" },
   { id: "primary-white", hex: "#ffffff" },

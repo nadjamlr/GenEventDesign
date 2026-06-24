@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import { FORMAT_SIZES, DEFAULT_FORMAT, ExportType, Side } from "@/lib/formats";
 import { DEFAULT_COLORS } from "@/lib/colors";
+import { shapes } from "@/lib/shapes";
 import type { AreaDef } from "@/lib/areas";
+import type { LogoMode } from "@/algorithms/grid";
 
 type DesignStore = {
   columns: number;
@@ -18,10 +20,14 @@ type DesignStore = {
   inputValues: Record<string, string>;
   areas: AreaDef[];
   side: Side;
+  logoEnabled: boolean;
+  logoMode: LogoMode;
   setColumns: (v: number) => void;
   setRows: (v: number) => void;
   setFormat: (v: string) => void;
   setSide: (v: Side) => void;
+  setLogoEnabled: (v: boolean) => void;
+  setLogoMode: (v: LogoMode) => void;
   setWidth: (v: number) => void;
   setHeight: (v: number) => void;
   setExportType: (v: ExportType) => void;
@@ -42,13 +48,15 @@ const useDesignStore = create<DesignStore>((set) => ({
   height: FORMAT_SIZES[DEFAULT_FORMAT].height,
   cornerRadius: FORMAT_SIZES[DEFAULT_FORMAT].cornerRadius ?? 0,
   exportType: FORMAT_SIZES[DEFAULT_FORMAT].defaultExportType ?? "png",
-  selectedShapes: [],
+  selectedShapes: shapes[0] ? [shapes[0].id] : [],
   customColors: [],
   selectedColors: [],
   seed: Math.floor(Math.random() * 1e9),
   inputValues: {},
   areas: [],
   side: "front",
+  logoEnabled: true,
+  logoMode: "random",
   setColumns: (v) => set({ columns: v }),
   setRows: (v) => set({ rows: v }),
   setFormat: (v) =>
@@ -60,6 +68,8 @@ const useDesignStore = create<DesignStore>((set) => ({
       ...(FORMAT_SIZES[v] ?? {}),
     })),
   setSide: (v) => set({ side: v }),
+  setLogoEnabled: (v) => set({ logoEnabled: v }),
+  setLogoMode: (v) => set({ logoMode: v }),
   setWidth: (v) => set({ width: v }),
   setHeight: (v) => set({ height: v }),
   setExportType: (v) => set({ exportType: v }),

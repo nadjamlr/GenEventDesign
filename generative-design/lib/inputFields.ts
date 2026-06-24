@@ -1,5 +1,6 @@
 import type { LogoAnchor } from "@/lib/logoPlacement";
 import type { Side } from "@/lib/formats";
+import type { TextStyleName } from "@/lib/textStyles";
 
 export type InputFieldDef = {
   key: string;
@@ -12,8 +13,18 @@ export type InputFieldDef = {
   optional?: boolean;
   /** Bei Formaten mit Vorder-/Rückseite: auf welcher Seite das Feld erscheint. Default "back". */
   side?: Side;
-  /** Größer dargestellt als die übrigen Zeilen (z.B. "VOUCHER"/"TICKET"-Schriftzug). */
-  emphasis?: boolean;
+  /**
+   * Text-Rolle (Größe + Weight), siehe lib/textStyles.ts. Dieselbe Rolle
+   * sieht über alle Formate hinweg gleich aus. Default "text".
+   */
+  style?: TextStyleName;
+  /**
+   * Feste, eigene Position auf dem Frame – v.a. für locked-Felder wie
+   * Website/Voucher-Label gedacht. Wenn gesetzt, wird das Feld NICHT in den
+   * gemeinsamen Input-Textblock (siehe FORMAT_INPUT_LAYOUT) gestapelt,
+   * sondern einzeln an diesem Anker gezeichnet.
+   */
+  position?: { anchor: LogoAnchor; align?: "left" | "center" | "right" };
 };
 
 export type InputLayout = {
@@ -24,36 +35,47 @@ export type InputLayout = {
 };
 
 // Trag hier die festen Default-Werte ein (z.B. Website, Voucher-/Ticket-Begriff).
+// "style" ordnet jedem Feld eine wiederverwendbare Text-Rolle zu (siehe
+// lib/textStyles.ts) – h1/h2/h3/p1/p2 sehen über alle Formate hinweg gleich aus.
 export const FORMAT_INPUT_FIELDS: Record<string, InputFieldDef[]> = {
   "Business Card": [
-    { key: "website", label: "Website", locked: true, defaultValue: "nrly.com", side: "front" },
-    { key: "firstName", label: "First", side: "back" },
-    { key: "lastName", label: "Last", side: "back" },
-    { key: "position", label: "Position", side: "back" },
-    { key: "address", label: "Adresse", side: "back" },
-    { key: "phone", label: "Phone", side: "back" },
-    { key: "email", label: "Email", side: "back" },
+    { key: "website", label: "Website", locked: true, defaultValue: "nrly.com", side: "front", style: "p2" },
+    { key: "firstName", label: "First", side: "back", style: "h1" },
+    { key: "lastName", label: "Last", side: "back", style: "h1" },
+    { key: "position", label: "Position", side: "back", style: "h3" },
+    { key: "address", label: "Address", side: "back", style: "p2" },
+    { key: "phone", label: "Phone", side: "back", style: "p2" },
+    { key: "email", label: "Mail", side: "back", style: "p2" },
   ],
   Voucher: [
-    { key: "voucherLabel", label: "Voucher", locked: true, defaultValue: "", side: "front", emphasis: true },
-    { key: "website", label: "Website", locked: true, defaultValue: "nrly.com", side: "front" },
-    { key: "value", label: "Value", side: "back" },
-    { key: "validUntil", label: "Valid until", side: "back" },
+    { key: "voucherLabel", label: "Voucher", locked: true, defaultValue: "", side: "front", style: "h1" },
+    { key: "website", label: "Website", locked: true, defaultValue: "nrly.com", side: "front", style: "p2" },
+    { key: "value", label: "Value", side: "back", style: "h1" },
+    { key: "validUntil", label: "Valid until", side: "back", style: "p2" },
+    { key: "address", label: "Address Line1", locked: true, defaultValue: "Baderstraße 2", side: "back", style: "p2" },
+    { key: "address", label: "Address Line2", locked: true, defaultValue: "81466 Munich", side: "back", style: "p2" },
   ],
   Ticket: [
-    { key: "ticketLabel", label: "Ticket", locked: true, defaultValue: "", side: "front", emphasis: true },
-    { key: "website", label: "Website", locked: true, defaultValue: "nrly.com", side: "front" },
-    { key: "eventName", label: "Event", side: "front" },
-    { key: "text", label: "Text", optional: true, side: "back" },
+    { key: "ticketLabel", label: "Ticket", locked: true, defaultValue: "", side: "front", style: "h1" },
+    { key: "website", label: "Website", locked: true, defaultValue: "nrly.com", side: "front", style: "p2" },
+    { key: "eventName", label: "Event", side: "front", style: "h3" },
+    { key: "text", label: "Text", optional: true, side: "back", style: "p1" },
+    { key: "date", label: "Date", optional: true, side: "back", style: "p2" },
+    { key: "location", label: "Location", optional: true, side: "back", style: "p2" },
   ],
-  Flyer: [{ key: "text", label: "Text", side: "front" }],
-  Skateboard: [{ key: "text", label: "Text", optional: true }],
+  Flyer: [
+    { key: "Heading", label: "Heading", side: "front", style: "h1" },
+    { key: "Subtitle", label: "Subtitle", side: "front", optional: true, style: "h3" },
+    { key: "Text", label: "Text", side: "front", optional: true, style: "p1" },
+    { key: "Heading 1", label: "Heading 1", side: "back", style: "h1" },
+    { key: "Text 1", label: "Text 1", side: "back", style: "p1" },
+    { key: "Heading 2", label: "Heading 2", side: "back", optional: true, style: "h2" },
+    { key: "Text 2", label: "Text 2", side: "back", optional: true, style: "p1" },
+  ],
 };
 
-export const DEFAULT_INPUT_FIELDS: InputFieldDef[] = [{ key: "text", label: "Text" }];
-
 export function getInputFields(format: string, side?: Side): InputFieldDef[] {
-  const all = FORMAT_INPUT_FIELDS[format] ?? DEFAULT_INPUT_FIELDS;
+  const all = FORMAT_INPUT_FIELDS[format] ?? [];
   if (!side) return all;
   return all.filter((field) => (field.side ?? "back") === side);
 }

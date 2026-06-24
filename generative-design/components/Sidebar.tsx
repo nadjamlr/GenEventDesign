@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { saveAs } from "file-saver"
 import jsPDF from "jspdf"
 import Button from "./Button"
@@ -19,6 +19,7 @@ import { exportRegistry } from "@/lib/canvasExport"
 import { getInputFields } from "@/lib/inputFields"
 import { ALL_ANCHORS, ANCHOR_LABELS, type LogoAnchor } from "@/lib/logoPlacement"
 import { hasSides, type Side } from "@/lib/formats"
+import type { LogoMode } from "@/algorithms/grid"
 import {
   type AreaKind,
   DEFAULT_IMAGE_AREA_SIZE,
@@ -28,6 +29,9 @@ import {
 const EXPORT_TYPES = ["png", "pdf"] as const;
 const SIDES: Side[] = ["front", "back"];
 const AREA_KINDS: AreaKind[] = ["text", "image"];
+const NO_IMAGE_AREA_FORMATS = ["Business Card", "Ticket", "Voucher"];
+const LOGO_MODES: LogoMode[] = ["random", "logo", "icon"];
+const LOGO_MODE_LABELS: Record<LogoMode, string> = { random: "Random", logo: "Logo", icon: "Icon" };
 const ANCHOR_OPTIONS = ALL_ANCHORS.map((a) => ANCHOR_LABELS[a]);
 const SHAPE_OPTIONS = shapes.map((s) => s.label);
 
@@ -65,6 +69,10 @@ export default function Sidebar() {
     removeArea,
     side,
     setSide,
+    logoEnabled,
+    setLogoEnabled,
+    logoMode,
+    setLogoMode,
   } = useDesignStore();
 
   const [hexInput, setHexInput] = useState("");
@@ -76,6 +84,13 @@ export default function Sidebar() {
   const [areaText, setAreaText] = useState("");
   const [areaImageDataUrl, setAreaImageDataUrl] = useState<string | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const allowImageAreas = !NO_IMAGE_AREA_FORMATS.includes(format);
+  const availableAreaKinds = allowImageAreas ? AREA_KINDS : AREA_KINDS.filter((k) => k !== "image");
+
+  useEffect(() => {
+    if (!allowImageAreas && areaKind === "image") setAreaKind("text");
+  }, [allowImageAreas, areaKind]);
 
   function handleAreaImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -150,12 +165,20 @@ export default function Sidebar() {
   const colors = [...DEFAULT_COLORS, ...customColors.map((hex) => ({ id: hex, hex }))];
   const formatHasSides = hasSides(format);
   const inputFields = getInputFields(format, formatHasSides ? side : undefined);
+  const showInputSection = inputFields.length > 0;
 
   return (
     <div className="fixed top-0 right-0 h-screen w-78 bg-primary-black flex flex-col gap-6 px-5 py-8 overflow-y-auto">
       <img src="/logoShapes/Logo_NRLY_White.svg" alt="NRLY" className="h-8 w-auto" />
       <div className="flex flex-col gap-6">
         <RulerSection heading="Format">
+          <RulerItem label="Format">
+            <Dropdown
+              label="Choose"
+              fields={["Social Post", "Poster", "Flyer", "Video", "Business Card", "Ticket", "Voucher", "Sticker", "Skateboard"]}
+              onChange={setFormat}
+            />
+          </RulerItem>
           <RulerItem label="Size">
             <Inputfield
               placeholder="1000"
@@ -169,19 +192,6 @@ export default function Sidebar() {
               value={String(height)}
               onChange={(v) => setHeight(Number(v) || 0)}
             />
-          </RulerItem>
-          <RulerItem label="Format">
-            <Dropdown
-              label="Choose"
-              fields={["Social Post", "Poster", "Flyer", "Video", "Business Card", "Ticket", "Voucher", "Sticker", "Skateboard"]}
-              onChange={setFormat}
-            />
-          </RulerItem>
-          <RulerItem label="Columns">
-            <Slider range={20} onChange={setColumns}/>
-          </RulerItem>
-          <RulerItem label="Rows">
-            <Slider range={20} onChange={setRows}/>
           </RulerItem>
           {formatHasSides && (
             <RulerItem label="Side">
@@ -207,19 +217,13 @@ export default function Sidebar() {
 
         <SeparationLine/>
 
-        <RulerSection heading="Input">
-          {inputFields.map((field) => (
-            <RulerItem key={field.key} label={field.label}>
-              <Inputfield
-                placeholder={field.label}
-                disabled={field.locked}
-                value={field.locked ? field.defaultValue ?? "" : inputValues[field.key] ?? ""}
-                onChange={field.locked ? undefined : (v) => setInputValue(field.key, v)}
-              />
-            </RulerItem>
-          ))}
-          <RulerItem label="Media">
-            <Button text="Upload" color="grey" />
+        <RulerSection
+          heading="Layout">
+          <RulerItem label="Columns">
+            <Slider range={20} onChange={setColumns}/>
+          </RulerItem>
+          <RulerItem label="Rows">
+            <Slider range={20} onChange={setRows}/>
           </RulerItem>
         </RulerSection>
 
@@ -270,7 +274,7 @@ export default function Sidebar() {
         <RulerSection heading="Areas">
           <RulerItem label="Kind">
             <div className="flex gap-2 w-full">
-              {AREA_KINDS.map((kind) => (
+              {availableAreaKinds.map((kind) => (
                 <button
                   key={kind}
                   type="button"
@@ -286,7 +290,6 @@ export default function Sidebar() {
               ))}
             </div>
           </RulerItem>
-
           <RulerItem label="Position">
             <Dropdown
               label="Choose"
@@ -353,12 +356,83 @@ export default function Sidebar() {
           )}
         </RulerSection>
 
+        {showInputSection && (
+          <>
+            <SeparationLine/>
+
+            <RulerSection heading="Input">
+              {inputFields.map((field) => (
+                <RulerItem key={field.key} label={field.label}>
+                  <Inputfield
+                    placeholder={field.label}
+                    disabled={field.locked}
+                    value={field.locked ? field.defaultValue ?? "" : inputValues[field.key] ?? ""}
+                    onChange={field.locked ? undefined : (v) => setInputValue(field.key, v)}
+                  />
+                </RulerItem>
+              ))}
+            </RulerSection>
+          </>
+        )}
+
+        <SeparationLine/>
+
+        <RulerSection heading="Logo">
+          <RulerItem label="Visible">
+            <div className="flex gap-2 w-full">
+              <button
+                type="button"
+                onClick={() => setLogoEnabled(true)}
+                className={`flex-1 py-1.5 rounded-sm text-xs uppercase transition-colors ${
+                  logoEnabled
+                    ? "bg-primary-color text-white"
+                    : "bg-primary-lightgrey text-primary-darkgrey hover:opacity-80"
+                }`}
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                onClick={() => setLogoEnabled(false)}
+                className={`flex-1 py-1.5 rounded-sm text-xs uppercase transition-colors ${
+                  !logoEnabled
+                    ? "bg-primary-color text-white"
+                    : "bg-primary-lightgrey text-primary-darkgrey hover:opacity-80"
+                }`}
+              >
+                No
+              </button>
+            </div>
+          </RulerItem>
+
+          {logoEnabled && (
+            <RulerItem label="Version">
+              <div className="flex gap-2 w-full">
+                {LOGO_MODES.map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setLogoMode(mode)}
+                    className={`flex-1 py-1.5 rounded-sm text-xs uppercase transition-colors ${
+                      logoMode === mode
+                        ? "bg-primary-color text-white"
+                        : "bg-primary-lightgrey text-primary-darkgrey hover:opacity-80"
+                    }`}
+                  >
+                    {LOGO_MODE_LABELS[mode]}
+                  </button>
+                ))}
+              </div>
+            </RulerItem>
+          )}
+        </RulerSection>
+
         <SeparationLine/>
 
         <RulerSection heading="Export">
           <RulerItem label="Name">
             <Inputfield
-              placeholder="Name"
+              placeholder="Filename"
               value={exportName}
               onChange={setExportName}
             />
