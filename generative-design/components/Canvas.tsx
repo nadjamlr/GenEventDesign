@@ -3,14 +3,32 @@
 import { useEffect, useRef } from "react";
 import p5 from "p5";
 import useDesignStore from "@/store/designStore";
-import { drawGrid, type ShapeImageProvider } from "@/algorithms/grid";
+import {
+  drawGrid,
+  type ShapeImageProvider,
+  type LogoImages,
+  type AreaImageProvider,
+} from "@/algorithms/grid";
 import { exportRegistry } from "@/lib/canvasExport";
 import { shapes } from "@/lib/shapes";
+import type { AreaDef } from "@/lib/areas";
 
 export default function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { columns, rows, width, height, cornerRadius, selectedShapes, selectedColors, seed } =
-    useDesignStore();
+  const {
+    columns,
+    rows,
+    width,
+    height,
+    cornerRadius,
+    selectedShapes,
+    selectedColors,
+    seed,
+    format,
+    areas,
+    inputValues,
+    side,
+  } = useDesignStore();
 
   // ref hält immer die aktuellen Werte, ohne p5 neu erstellen zu müssen
   const paramsRef = useRef({
@@ -22,6 +40,10 @@ export default function Canvas() {
     selectedShapes,
     selectedColors,
     seed,
+    format,
+    areas,
+    inputValues,
+    side,
   });
   paramsRef.current = {
     columns,
@@ -32,6 +54,10 @@ export default function Canvas() {
     selectedShapes,
     selectedColors,
     seed,
+    format,
+    areas,
+    inputValues,
+    side,
   };
 
   useEffect(() => {
@@ -101,6 +127,80 @@ export default function Canvas() {
       return pImg;
     }
 
+    // Logo (fest, beide Farbvarianten), unabhängig von der Shape-Auswahl.
+    const logoImages: LogoImages = {};
+
+    function loadLogoVariant(p: p5, src: string, onLoaded: (img: p5.Image) => void) {
+      const htmlImg = new window.Image();
+      htmlImg.onload = () => {
+        const pImg = p.createImage(htmlImg.naturalWidth, htmlImg.naturalHeight);
+        (pImg as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext.drawImage(
+          htmlImg,
+          0,
+          0
+        );
+        onLoaded(pImg);
+      };
+      htmlImg.src = src;
+    }
+
+    // Hochgeladene Fotos für Bild-Areas, pro Area-Id.
+    const areaPhotoImages = new Map<string, HTMLImageElement>();
+    const loadingAreaPhotos = new Set<string>();
+    // Fertige, durch die Shape maskierte Komposite, gecacht pro "areaId|w|h".
+    const areaMaskedCache = new Map<string, p5.Image>();
+
+    function ensureAreaPhotosLoaded(areaList: AreaDef[]) {
+      for (const area of areaList) {
+        if (area.kind !== "image" || !area.imageDataUrl) continue;
+        if (areaPhotoImages.has(area.id) || loadingAreaPhotos.has(area.id)) continue;
+        loadingAreaPhotos.add(area.id);
+
+        const htmlImg = new window.Image();
+        htmlImg.onload = () => {
+          areaPhotoImages.set(area.id, htmlImg);
+          loadingAreaPhotos.delete(area.id);
+        };
+        htmlImg.onerror = () => {
+          loadingAreaPhotos.delete(area.id);
+        };
+        htmlImg.src = area.imageDataUrl;
+      }
+    }
+
+    // Foto "cover"-skaliert in die Box zeichnen, dann mit der Shape-Silhouette
+    // maskieren (destination-in) – die Shape füllt die Box komplett aus
+    // ("sehr hoch skaliert"), das Foto ist nur innerhalb ihrer Form sichtbar.
+    function getMaskedAreaImage(p: p5, area: AreaDef, w: number, h: number): p5.Image | undefined {
+      const photo = areaPhotoImages.get(area.id);
+      const mask = area.shapeId ? rawImages.get(area.shapeId) : undefined;
+      if (!photo || !mask) return undefined;
+
+      const rw = Math.round(w);
+      const rh = Math.round(h);
+      const key = `${area.id}|${rw}|${rh}`;
+      const cached = areaMaskedCache.get(key);
+      if (cached) return cached;
+
+      const pImg = p.createImage(rw, rh);
+      const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D })
+        .drawingContext;
+
+      const photoScale = Math.max(rw / photo.naturalWidth, rh / photo.naturalHeight);
+      const pw = photo.naturalWidth * photoScale;
+      const ph = photo.naturalHeight * photoScale;
+      ctx.drawImage(photo, (rw - pw) / 2, (rh - ph) / 2, pw, ph);
+
+      ctx.globalCompositeOperation = "destination-in";
+      const maskScale = Math.max(rw / mask.naturalWidth, rh / mask.naturalHeight);
+      const mw = mask.naturalWidth * maskScale;
+      const mh = mask.naturalHeight * maskScale;
+      ctx.drawImage(mask, (rw - mw) / 2, (rh - mh) / 2, mw, mh);
+
+      areaMaskedCache.set(key, pImg);
+      return pImg;
+    }
+
     const instance = new p5((p: p5) => {
       let canvasElt: HTMLElement;
 
@@ -108,11 +208,20 @@ export default function Canvas() {
         isReady: (id) => rawImages.has(id),
         getImage: (id, colorHex) => getTintedImage(p, id, colorHex),
       };
+      const areaImages: AreaImageProvider = {
+        getImage: (area, w, h) => getMaskedAreaImage(p, area, w, h),
+      };
 
       p.setup = () => {
         const { w, h, cornerRadius } = fittedSize();
         canvasElt = p.createCanvas(w, h).elt;
         canvasElt.style.borderRadius = `${cornerRadius}px`;
+        loadLogoVariant(p, "/logoShapes/Logo_NRLY_Black.svg", (img) => {
+          logoImages.black = img;
+        });
+        loadLogoVariant(p, "/logoShapes/Logo_NRLY_White.svg", (img) => {
+          logoImages.white = img;
+        });
       };
       p.draw = () => {
         const { w, h, cornerRadius } = fittedSize();
@@ -120,18 +229,37 @@ export default function Canvas() {
           p.resizeCanvas(w, h);
         }
         canvasElt.style.borderRadius = `${cornerRadius}px`;
-        ensureRawLoaded(paramsRef.current.selectedShapes);
-        drawGrid(p, { ...paramsRef.current, cornerRadius, shapeImages });
+        const areaShapeIds = paramsRef.current.areas
+          .filter((a): a is AreaDef & { shapeId: string } => !!a.shapeId)
+          .map((a) => a.shapeId);
+        ensureRawLoaded([...paramsRef.current.selectedShapes, ...areaShapeIds]);
+        ensureAreaPhotosLoaded(paramsRef.current.areas);
+        drawGrid(p, { ...paramsRef.current, cornerRadius, shapeImages, logoImages, areaImages });
       };
     }, containerRef.current);
 
-    exportRegistry.render = () => {
-      const { columns, rows, width, height, cornerRadius, selectedShapes, selectedColors, seed } =
-        paramsRef.current;
+    exportRegistry.render = (overrideSide) => {
+      const {
+        columns,
+        rows,
+        width,
+        height,
+        cornerRadius,
+        selectedShapes,
+        selectedColors,
+        seed,
+        format,
+        areas,
+        inputValues,
+        side,
+      } = paramsRef.current;
       const gfx = instance.createGraphics(width, height);
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
         getImage: (id, colorHex) => getTintedImage(instance, id, colorHex),
+      };
+      const areaImages: AreaImageProvider = {
+        getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
       };
       drawGrid(gfx, {
         columns,
@@ -141,6 +269,12 @@ export default function Canvas() {
         selectedColors,
         shapeImages,
         seed,
+        format,
+        logoImages,
+        areas,
+        areaImages,
+        inputValues,
+        side: overrideSide ?? side,
       });
       const dataUrl = (gfx.elt as HTMLCanvasElement).toDataURL("image/png");
       gfx.remove();

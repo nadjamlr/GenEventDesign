@@ -5,7 +5,6 @@ export type ShapeDef = {
 };
 
 export const shapes: ShapeDef[] = [
-  { id: "logo", label: "Logo", src: "/logoShapes/Logo_NRLY_Black.svg" },
   { id: "l", label: "L", src: "/logoShapes/l.svg" },
   { id: "n1", label: "N1", src: "/logoShapes/n1.svg" },
   { id: "n2", label: "N2", src: "/logoShapes/n2.svg" },

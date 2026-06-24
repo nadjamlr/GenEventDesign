@@ -4,11 +4,12 @@ export type ColorDef = {
 };
 
 export const DEFAULT_COLORS: ColorDef[] = [
-  { id: "primary-blue", hex: "#2F00FF" },
-  { id: "secondary-red", hex: "#F72E14" },
-  { id: "secondary-light-blue", hex: "#C2DAFF" },
-  { id: "secondary-pink", hex: "#FBACFB" },
-  { id: "secondary-green", hex: "#D7EE44" },
+  { id: "primary-blue", hex: "#355CD0" },
+  { id: "secondary-blue-grey", hex: "#C4C8CE" },
+  { id: "secondary-yellow", hex: "#F2D974" },
+  { id: "secondary-senf", hex: "#FFAD01" },
+  { id: "primary-white", hex: "#ffffff" },
+  { id: "primary-black", hex: "#000000"},
 ];
 
 export function normalizeHex(input: string): string | null {

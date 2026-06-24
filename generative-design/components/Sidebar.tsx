@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { saveAs } from "file-saver"
 import jsPDF from "jspdf"
 import Button from "./Button"
@@ -16,8 +16,28 @@ import useDesignStore from "@/store/designStore"
 import { shapes } from "@/lib/shapes"
 import { DEFAULT_COLORS, normalizeHex } from "@/lib/colors"
 import { exportRegistry } from "@/lib/canvasExport"
+import { getInputFields } from "@/lib/inputFields"
+import { ALL_ANCHORS, ANCHOR_LABELS, type LogoAnchor } from "@/lib/logoPlacement"
+import { hasSides, type Side } from "@/lib/formats"
+import {
+  type AreaKind,
+  DEFAULT_IMAGE_AREA_SIZE,
+  DEFAULT_TEXT_AREA_SIZE,
+} from "@/lib/areas"
 
 const EXPORT_TYPES = ["png", "pdf"] as const;
+const SIDES: Side[] = ["front", "back"];
+const AREA_KINDS: AreaKind[] = ["text", "image"];
+const ANCHOR_OPTIONS = ALL_ANCHORS.map((a) => ANCHOR_LABELS[a]);
+const SHAPE_OPTIONS = shapes.map((s) => s.label);
+
+function labelToAnchor(label: string): LogoAnchor {
+  return ALL_ANCHORS.find((a) => ANCHOR_LABELS[a] === label) ?? "center";
+}
+
+function labelToShapeId(label: string): string | undefined {
+  return shapes.find((s) => s.label === label)?.id;
+}
 
 export default function Sidebar() {
   const {
@@ -38,10 +58,51 @@ export default function Sidebar() {
     toggleColor,
     addCustomColor,
     regenerate,
+    inputValues,
+    setInputValue,
+    areas,
+    addArea,
+    removeArea,
+    side,
+    setSide,
   } = useDesignStore();
 
   const [hexInput, setHexInput] = useState("");
   const [exportName, setExportName] = useState("");
+
+  const [areaKind, setAreaKind] = useState<AreaKind>("text");
+  const [areaAnchor, setAreaAnchor] = useState<LogoAnchor>("center");
+  const [areaShapeId, setAreaShapeId] = useState<string | undefined>(shapes[0]?.id);
+  const [areaText, setAreaText] = useState("");
+  const [areaImageDataUrl, setAreaImageDataUrl] = useState<string | undefined>(undefined);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function handleAreaImageChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setAreaImageDataUrl(reader.result as string);
+    reader.readAsDataURL(file);
+  }
+
+  function handleAddArea() {
+    if (areaKind === "text") {
+      if (!areaText.trim()) return;
+      addArea({ kind: "text", anchor: areaAnchor, text: areaText, ...DEFAULT_TEXT_AREA_SIZE });
+      setAreaText("");
+    } else {
+      if (!areaShapeId || !areaImageDataUrl) return;
+      addArea({
+        kind: "image",
+        anchor: areaAnchor,
+        shapeId: areaShapeId,
+        imageDataUrl: areaImageDataUrl,
+        ...DEFAULT_IMAGE_AREA_SIZE,
+      });
+      setAreaImageDataUrl(undefined);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
 
   function handleHexEnter(value: string) {
     const normalized = normalizeHex(value);
@@ -52,9 +113,25 @@ export default function Sidebar() {
 
   async function handleExport() {
     if (!exportRegistry.render) return;
-    const { dataUrl, width, height } = exportRegistry.render();
     const filename = exportName.trim() || "export";
 
+    if (exportType === "pdf" && hasSides(format)) {
+      // Formate mit Vorder-/Rückseite: immer beide Seiten als 2-Seiten-PDF.
+      const front = exportRegistry.render("front");
+      const back = exportRegistry.render("back");
+      const pdf = new jsPDF({
+        orientation: front.width >= front.height ? "landscape" : "portrait",
+        unit: "px",
+        format: [front.width, front.height],
+      });
+      pdf.addImage(front.dataUrl, "PNG", 0, 0, front.width, front.height);
+      pdf.addPage([back.width, back.height], back.width >= back.height ? "landscape" : "portrait");
+      pdf.addImage(back.dataUrl, "PNG", 0, 0, back.width, back.height);
+      pdf.save(`${filename}.pdf`);
+      return;
+    }
+
+    const { dataUrl, width, height } = exportRegistry.render();
     if (exportType === "pdf") {
       const pdf = new jsPDF({
         orientation: width >= height ? "landscape" : "portrait",
@@ -65,11 +142,14 @@ export default function Sidebar() {
       pdf.save(`${filename}.pdf`);
     } else {
       const blob = await (await fetch(dataUrl)).blob();
-      saveAs(blob, `${filename}.png`);
+      const suffix = hasSides(format) ? `_${side}` : "";
+      saveAs(blob, `${filename}${suffix}.png`);
     }
   }
 
   const colors = [...DEFAULT_COLORS, ...customColors.map((hex) => ({ id: hex, hex }))];
+  const formatHasSides = hasSides(format);
+  const inputFields = getInputFields(format, formatHasSides ? side : undefined);
 
   return (
     <div className="fixed top-0 right-0 h-screen w-78 bg-primary-black flex flex-col gap-6 px-5 py-8 overflow-y-auto">
@@ -103,14 +183,41 @@ export default function Sidebar() {
           <RulerItem label="Rows">
             <Slider range={20} onChange={setRows}/>
           </RulerItem>
+          {formatHasSides && (
+            <RulerItem label="Side">
+              <div className="flex gap-2 w-full">
+                {SIDES.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setSide(s)}
+                    className={`flex-1 py-1.5 rounded-sm text-xs uppercase transition-colors ${
+                      side === s
+                        ? "bg-primary-color text-white"
+                        : "bg-primary-lightgrey text-primary-darkgrey hover:opacity-80"
+                    }`}
+                  >
+                    {s === "front" ? "Vorne" : "Hinten"}
+                  </button>
+                ))}
+              </div>
+            </RulerItem>
+          )}
         </RulerSection>
 
         <SeparationLine/>
 
         <RulerSection heading="Input">
-          <RulerItem label="Text">
-            <Inputfield />
-          </RulerItem>
+          {inputFields.map((field) => (
+            <RulerItem key={field.key} label={field.label}>
+              <Inputfield
+                placeholder={field.label}
+                disabled={field.locked}
+                value={field.locked ? field.defaultValue ?? "" : inputValues[field.key] ?? ""}
+                onChange={field.locked ? undefined : (v) => setInputValue(field.key, v)}
+              />
+            </RulerItem>
+          ))}
           <RulerItem label="Media">
             <Button text="Upload" color="grey" />
           </RulerItem>
@@ -159,7 +266,95 @@ export default function Sidebar() {
         </RulerSection>
 
         <SeparationLine/>
-        
+
+        <RulerSection heading="Areas">
+          <RulerItem label="Kind">
+            <div className="flex gap-2 w-full">
+              {AREA_KINDS.map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => setAreaKind(kind)}
+                  className={`flex-1 py-1.5 rounded-sm text-xs uppercase transition-colors ${
+                    areaKind === kind
+                      ? "bg-primary-color text-white"
+                      : "bg-primary-lightgrey text-primary-darkgrey hover:opacity-80"
+                  }`}
+                >
+                  {kind === "text" ? "Text" : "Bild"}
+                </button>
+              ))}
+            </div>
+          </RulerItem>
+
+          <RulerItem label="Position">
+            <Dropdown
+              label="Choose"
+              fields={ANCHOR_OPTIONS}
+              onChange={(label) => setAreaAnchor(labelToAnchor(label))}
+            />
+          </RulerItem>
+
+          {areaKind === "text" ? (
+            <RulerItem label="Text">
+              <Inputfield placeholder="Text" value={areaText} onChange={setAreaText} />
+            </RulerItem>
+          ) : (
+            <>
+              <RulerItem label="Shape">
+                <Dropdown
+                  label="Choose"
+                  fields={SHAPE_OPTIONS}
+                  onChange={(label) => setAreaShapeId(labelToShapeId(label))}
+                />
+              </RulerItem>
+              <RulerItem label="Bild">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleAreaImageChange}
+                />
+                <Button
+                  text={areaImageDataUrl ? "Bild gewählt" : "Upload"}
+                  color="grey"
+                  onClick={() => fileInputRef.current?.click()}
+                />
+              </RulerItem>
+            </>
+          )}
+
+          <div className="flex flex-col w-full items-center px-2 mt-2">
+            <Button size="sm" text="Add Area" onClick={handleAddArea} />
+          </div>
+
+          {areas.length > 0 && (
+            <div className="flex flex-col gap-1 px-2 mt-2">
+              {areas.map((area) => (
+                <div
+                  key={area.id}
+                  className="flex items-center justify-between gap-2 bg-primary-lightgrey rounded-sm px-3 py-1.5 text-xs text-primary-darkgrey"
+                >
+                  <span className="truncate">
+                    {area.kind === "text" ? "Text" : "Bild"} · {ANCHOR_LABELS[area.anchor]}
+                    {area.kind === "text" ? `: ${area.text}` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeArea(area.id)}
+                    className="shrink-0 text-primary-black hover:opacity-60"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </RulerSection>
+
+        <SeparationLine/>
+
         <RulerSection heading="Export">
           <RulerItem label="Name">
             <Inputfield

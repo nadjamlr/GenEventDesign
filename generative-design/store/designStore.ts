@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import { FORMAT_SIZES, DEFAULT_FORMAT, ExportType } from "@/lib/formats";
+import { FORMAT_SIZES, DEFAULT_FORMAT, ExportType, Side } from "@/lib/formats";
 import { DEFAULT_COLORS } from "@/lib/colors";
+import type { AreaDef } from "@/lib/areas";
 
 type DesignStore = {
   columns: number;
@@ -14,16 +15,23 @@ type DesignStore = {
   customColors: string[];
   selectedColors: string[];
   seed: number;
+  inputValues: Record<string, string>;
+  areas: AreaDef[];
+  side: Side;
   setColumns: (v: number) => void;
   setRows: (v: number) => void;
   setFormat: (v: string) => void;
+  setSide: (v: Side) => void;
   setWidth: (v: number) => void;
   setHeight: (v: number) => void;
   setExportType: (v: ExportType) => void;
   toggleShape: (id: string) => void;
   toggleColor: (hex: string) => void;
   addCustomColor: (hex: string) => void;
+  setInputValue: (key: string, value: string) => void;
   regenerate: () => void;
+  addArea: (area: Omit<AreaDef, "id">) => void;
+  removeArea: (id: string) => void;
 };
 
 const useDesignStore = create<DesignStore>((set) => ({
@@ -38,15 +46,20 @@ const useDesignStore = create<DesignStore>((set) => ({
   customColors: [],
   selectedColors: [],
   seed: Math.floor(Math.random() * 1e9),
+  inputValues: {},
+  areas: [],
+  side: "front",
   setColumns: (v) => set({ columns: v }),
   setRows: (v) => set({ rows: v }),
   setFormat: (v) =>
     set((state) => ({
       format: v,
       cornerRadius: 0,
+      side: "front",
       exportType: FORMAT_SIZES[v]?.defaultExportType ?? state.exportType,
       ...(FORMAT_SIZES[v] ?? {}),
     })),
+  setSide: (v) => set({ side: v }),
   setWidth: (v) => set({ width: v }),
   setHeight: (v) => set({ height: v }),
   setExportType: (v) => set({ exportType: v }),
@@ -75,6 +88,14 @@ const useDesignStore = create<DesignStore>((set) => ({
       };
     }),
   regenerate: () => set({ seed: Math.floor(Math.random() * 1e9) }),
+  setInputValue: (key, value) =>
+    set((state) => ({ inputValues: { ...state.inputValues, [key]: value } })),
+  addArea: (area) =>
+    set((state) => ({
+      areas: [...state.areas, { ...area, id: `${Date.now()}-${Math.random()}` }],
+    })),
+  removeArea: (id) =>
+    set((state) => ({ areas: state.areas.filter((a) => a.id !== id) })),
 }));
 
 export default useDesignStore;

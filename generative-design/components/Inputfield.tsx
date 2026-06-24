@@ -8,9 +8,10 @@ type InputfieldProps = {
   value?: string;
   onChange?: (value: string) => void;
   onEnter?: (value: string) => void;
+  disabled?: boolean;
 };
 
-export default function Inputfield({ unit, placeholder, value: controlledValue, onChange, onEnter }: InputfieldProps) {
+export default function Inputfield({ unit, placeholder, value: controlledValue, onChange, onEnter, disabled }: InputfieldProps) {
   const [internalValue, setInternalValue] = useState("");
   const value = controlledValue ?? internalValue;
   const isNumber = !!unit;
@@ -29,14 +30,19 @@ export default function Inputfield({ unit, placeholder, value: controlledValue, 
   }
 
   return (
-    <div className="flex items-center gap-1 w-full bg-primary-lightgrey rounded-sm px-3 py-1.5 focus-within:ring-2 focus-within:ring-primary-color">
+    <div
+      className={`flex items-center gap-1 w-full bg-primary-lightgrey rounded-sm px-3 py-1.5 focus-within:ring-2 focus-within:ring-primary-color ${
+        disabled ? "opacity-50" : ""
+      }`}
+    >
       <input
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        disabled={disabled}
         inputMode={isNumber ? "numeric" : "text"}
         placeholder={placeholder ?? (isNumber ? "0" : "...")}
-        className="w-full bg-transparent text-primary-black text-xs outline-none placeholder:text-primary-darkgrey"
+        className="w-full bg-transparent text-primary-black text-xs outline-none placeholder:text-primary-darkgrey disabled:cursor-not-allowed"
       />
       {unit && (
         <span className="text-xs text-primary-darkgrey shrink-0">{unit}</span>
