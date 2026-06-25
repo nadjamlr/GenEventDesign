@@ -15,8 +15,8 @@ export type TextStyle = {
 
 export const TEXT_STYLES: Record<TextStyleName, TextStyle> = {
   title: { sizeMultiplier: 6, weight: 400 },
-  h1: { sizeMultiplier: 2, weight: 400 },
-  h2: { sizeMultiplier: 1.4, weight: 400, letterSpacing: 0.04 },
+  h1: { sizeMultiplier: 2.1, weight: 400 },
+  h2: { sizeMultiplier: 1.5, weight: 400, letterSpacing: 0.04 },
   h3: { sizeMultiplier: 1.2, weight: 200, letterSpacing: 0.04 },
   h4: { sizeMultiplier: 1.2, weight: 400, letterSpacing: 0.04 },
   p1: { sizeMultiplier: 0.9, weight: 400, letterSpacing: 0.04 },
