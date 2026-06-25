@@ -63,10 +63,12 @@ const MIN_GAP_RATIO = 0.8; // Mindestabstand zwischen Mittelpunkten, relativ zur
 const MAX_PLACEMENT_ATTEMPTS = 24; // Versuche pro Element, eine Position mit genug Abstand zu Nachbarn zu finden
 
 // Bewegungs-Amplituden für die Animation, relativ zur Elementgröße (baseUnit)
-// bzw. als absolute Faktoren. Bewusst dezent, damit die Komposition ruhig wirkt.
-const MOTION_DRIFT = 0.5; // Positions-Drift relativ zu baseUnit
-const MOTION_PULSE = 0.45; // max. Größen-Pulsieren
-const MOTION_ROT = Math.PI / 3; // max. Rotations-Wackeln um die Basis-Rotation
+// bzw. als absolute Faktoren.
+const MOTION_DRIFT = 0.45; // organische Eigen-Bewegung pro Element, relativ zu baseUnit
+const MOTION_PULSE = 0.5; // max. Größen-Pulsieren
+const MOTION_ROT_WOBBLE = Math.PI / 12; // kleines organisches Wackeln zusätzlich zur Haupt-Rotation
+const SWAY_AMOUNT = 0.3; // gemeinsames Schwingen der ganzen Komposition (Lissajous-Bahn), relativ zu baseUnit
+const SPIN_BASE = 2; // Basiswert für die größenabhängige Umdrehungszahl – kleinere Elemente drehen schneller (Parallaxe/Tiefenwirkung)
 const TAU = Math.PI * 2;
 
 function hashString(str: string): number {
@@ -442,10 +444,30 @@ export function drawGrid(p5: p5Types, params: Params) {
     // die Frames hinweg konsistent driftet/pulsiert.
     if (animate) {
       const k = inst.idx * 1.7;
+
+      // Gemeinsames Schwingen der ganzen Komposition auf einer Lissajous-Bahn
+      // (x mit einfacher, y mit doppelter Frequenz) – alle Elemente bewegen
+      // sich zusätzlich im Verbund, statt nur unabhängig voneinander zu
+      // wackeln. Beide Komponenten sind bei phase 0 und 1 exakt 0, damit das
+      // Loop nahtlos bleibt und der statische Stand unverändert bleibt.
+      cx += Math.sin(TAU * phase) * baseUnit * SWAY_AMOUNT;
+      cy += Math.sin(TAU * phase * 2) * baseUnit * SWAY_AMOUNT * 0.6;
+
+      // Eigene, über die Loop-Phase nahtlose Restbewegung für organische
+      // Varianz zusätzlich zum gemeinsamen Schwingen.
       cx += loopDelta(seed, k, 11.3, phase) * baseUnit * MOTION_DRIFT;
       cy += loopDelta(seed, k + 50, 23.7, phase) * baseUnit * MOTION_DRIFT;
       size *= 1 + loopDelta(seed, k + 99, 7.1, phase) * MOTION_PULSE;
-      rot += loopDelta(seed, k + 200, 3.3, phase) * MOTION_ROT;
+
+      // Kontinuierliche Rotation statt nur Wackeln: kleinere Elemente drehen
+      // sich schneller als große (Parallaxe/Tiefenwirkung). Die Umdrehungszahl
+      // ist ganzzahlig, damit die Rotation bei phase=1 wieder exakt auf dem
+      // Startwinkel landet (mod 360°) und die Schleife nahtlos bleibt.
+      const relSize = inst.size / baseUnit;
+      const spins = Math.max(1, Math.round(SPIN_BASE / Math.max(0.4, relSize)));
+      const dir = hash2(inst.idx, 77, seed) < 0.5 ? 1 : -1;
+      rot += dir * spins * TAU * phase;
+      rot += loopDelta(seed, k + 200, 3.3, phase) * MOTION_ROT_WOBBLE;
     }
 
     const img =
