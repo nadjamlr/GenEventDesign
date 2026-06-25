@@ -159,6 +159,8 @@ type Instance = {
   size: number;
   shapeId?: string;
   colorHex: string;
+  /** Basis-Rotation dieser Shape; ohne Angabe gilt die gemeinsame angleStep. */
+  baseRot?: number;
 };
 
 // Mittelt die Helligkeit einiger Stichproben-Pixel in einem Bereich, damit
@@ -432,88 +434,186 @@ export function drawGrid(p5: p5Types, params: Params) {
   // Vorder- und Rückseite, da sharedRng seitenunabhängig ist).
   const angleStep = Math.floor(sharedRng() * 8) * (Math.PI / 4);
 
-  // Spalten/Zeilen-Regler steuern jetzt die Dichte der frei gestreuten
-  // Elemente statt fixer Zellen.
+  // Spalten/Zeilen steuern die Gesamtdichte; baseUnit ist die typische
+  // Elementgröße, abgeleitet aus Fläche / Anzahl.
   const count = Math.max(1, columns * rows);
   const baseUnit = Math.sqrt((innerW * innerH) / count);
   const bleedX = innerW * BLEED_RATIO;
   const bleedY = innerH * BLEED_RATIO;
 
-  // Größe jedes Elements vorab bestimmen, damit die Platzierung anschließend
-  // größte Elemente zuerst versuchen kann – sie bekommen die erste Wahl an
-  // freiem Platz, kleinere füllen danach die Lücken. So verteilt sich die
-  // Streuung gleichmäßiger, als wenn ein großes Element zufällig erst spät
-  // (und dann oft gar nicht mehr) einen Platz fände.
-  const candidates = Array.from({ length: count }, (_, i) => {
-    // rng()**2 bevorzugt kleinere Elemente, mit gelegentlichen großen
-    // Ausreißern – organischer als eine Gleichverteilung.
-    const scale = 0.5 + rng() ** 2 * 2.5;
-    return { idx: i, size: baseUnit * scale };
-  }).sort((a, b) => b.size - a.size);
+  // Gemeinsame Helfer für alle Anordnungen.
+  const pickShape = () =>
+    availableShapes.length > 0 ? availableShapes[Math.floor(rng() * availableShapes.length)] : undefined;
+  const pickColor = () =>
+    selectedColors.length > 0 ? selectedColors[Math.floor(rng() * selectedColors.length)] : FALLBACK_COLOR;
+  const intersectsExclusion = (cx: number, cy: number, size: number) =>
+    exclusionRects.some(({ x, y, w, h }) =>
+      rectsOverlap(cx - size / 2, cy - size / 2, size, size, x, y, w, h)
+    );
+  const inBleed = (cx: number, cy: number) =>
+    cx >= innerX - bleedX &&
+    cx <= innerX + innerW + bleedX &&
+    cy >= innerY - bleedY &&
+    cy <= innerY + innerH + bleedY;
 
-  // Räumliches Hash-Grid für die Nachbarsuche: Zellgröße deckt die
-  // größtmögliche Paarung ab, damit ein 3x3-Block um die Kandidaten-Zelle
-  // garantiert alle relevanten Nachbarn enthält.
-  const cellSize = Math.max(1, candidates[0]?.size ?? baseUnit);
-  const grid = new Map<string, Instance[]>();
+  // --- Anordnung 1: organische Streuung (Standard) ---
+  // Größte Elemente zuerst platzieren (erste Wahl an freiem Platz), Nachbar-
+  // Abstand über ein räumliches Hash-Grid prüfen. Etwas Überlappung bleibt
+  // erlaubt (MIN_GAP_RATIO) für die gewollte Tiefenwirkung.
+  function placeScatter(): Instance[] {
+    const candidates = Array.from({ length: count }, (_, i) => {
+      const scale = 0.5 + rng() ** 2 * 2.5;
+      return { idx: i, size: baseUnit * scale };
+    }).sort((a, b) => b.size - a.size);
 
-  function neighborsTooClose(cx: number, cy: number, size: number): boolean {
-    const ix = Math.floor(cx / cellSize);
-    const iy = Math.floor(cy / cellSize);
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        const bucket = grid.get(cellKey(ix + dx, iy + dy));
-        if (!bucket) continue;
-        for (const other of bucket) {
-          const minDist = ((size + other.size) / 2) * MIN_GAP_RATIO;
-          const ddx = cx - other.cx;
-          const ddy = cy - other.cy;
-          if (ddx * ddx + ddy * ddy < minDist * minDist) return true;
+    const cellSize = Math.max(1, candidates[0]?.size ?? baseUnit);
+    const grid = new Map<string, Instance[]>();
+    const neighborsTooClose = (cx: number, cy: number, size: number): boolean => {
+      const ix = Math.floor(cx / cellSize);
+      const iy = Math.floor(cy / cellSize);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const bucket = grid.get(cellKey(ix + dx, iy + dy));
+          if (!bucket) continue;
+          for (const other of bucket) {
+            const minDist = ((size + other.size) / 2) * MIN_GAP_RATIO;
+            const ddx = cx - other.cx;
+            const ddy = cy - other.cy;
+            if (ddx * ddx + ddy * ddy < minDist * minDist) return true;
+          }
         }
       }
+      return false;
+    };
+
+    const result: Instance[] = [];
+    for (const { idx, size } of candidates) {
+      for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
+        const cx = innerX - bleedX + rng() * (innerW + bleedX * 2);
+        const cy = innerY - bleedY + rng() * (innerH + bleedY * 2);
+        if (intersectsExclusion(cx, cy, size)) continue;
+        if (neighborsTooClose(cx, cy, size)) continue;
+        const inst: Instance = { idx, cx, cy, size, shapeId: pickShape(), colorHex: pickColor() };
+        result.push(inst);
+        const key = cellKey(Math.floor(cx / cellSize), Math.floor(cy / cellSize));
+        const bucket = grid.get(key);
+        if (bucket) bucket.push(inst);
+        else grid.set(key, [inst]);
+        break;
+      }
     }
-    return false;
+    return result;
   }
 
-  // Pro Element mehrere Kandidaten-Positionen ausprobieren und nur eine
-  // annehmen, die zu bereits platzierten Elementen genug Abstand hält. Etwas
-  // Überlappung bleibt erlaubt (siehe MIN_GAP_RATIO) für die gewollte
-  // Tiefenwirkung beim Stapeln; findet sich nach den Versuchen keine Position,
-  // entfällt das Element (wie zuvor bei Überlappung mit festen Areas).
-  const instances: Instance[] = [];
-  for (const { idx, size } of candidates) {
-    for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
-      const cx = innerX - bleedX + rng() * (innerW + bleedX * 2);
-      const cy = innerY - bleedY + rng() * (innerH + bleedY * 2);
-
-      const intersectsArea = exclusionRects.some(({ x, y, w, h }) =>
-        rectsOverlap(cx - size / 2, cy - size / 2, size, size, x, y, w, h)
-      );
-      if (intersectsArea) continue;
-      if (neighborsTooClose(cx, cy, size)) continue;
-
-      const inst: Instance = {
-        idx,
-        cx,
-        cy,
-        size,
-        shapeId:
-          availableShapes.length > 0
-            ? availableShapes[Math.floor(rng() * availableShapes.length)]
-            : undefined,
-        colorHex:
-          selectedColors.length > 0
-            ? selectedColors[Math.floor(rng() * selectedColors.length)]
-            : FALLBACK_COLOR,
-      };
-      instances.push(inst);
-      const key = cellKey(Math.floor(cx / cellSize), Math.floor(cy / cellSize));
-      const bucket = grid.get(key);
-      if (bucket) bucket.push(inst);
-      else grid.set(key, [inst]);
-      break;
+  // --- Anordnung 2: regelmäßiges Raster (Truchet) ---
+  // Eine Shape pro Zelle, kantenbündig, mit zufälliger 90°-Drehung – die
+  // Shapes verbinden sich zu durchgehenden Formen.
+  function placeGrid(): Instance[] {
+    const cols = Math.max(1, Math.round(columns));
+    const rowsCount = Math.max(1, Math.round(rows));
+    const cw = innerW / cols;
+    const ch = innerH / rowsCount;
+    const cell = Math.min(cw, ch);
+    const result: Instance[] = [];
+    let i = 0;
+    for (let r = 0; r < rowsCount; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x = c * cw;
+        const y = r * ch;
+        if (exclusionRects.some((a) => rectsOverlap(x, y, cw, ch, a.x, a.y, a.w, a.h))) continue;
+        result.push({
+          idx: i++,
+          cx: x + cw / 2,
+          cy: y + ch / 2,
+          size: cell,
+          baseRot: Math.floor(rng() * 4) * (Math.PI / 2),
+          shapeId: pickShape(),
+          colorHex: pickColor(),
+        });
+      }
     }
+    return result;
   }
+
+  // --- Anordnung 3: konzentrische Ringe (radial) ---
+  // Shapes sitzen auf Kreisen um die Mitte und sind tangential ausgerichtet.
+  function placeRings(): Instance[] {
+    const ccx = innerX + innerW / 2;
+    const ccy = innerY + innerH / 2;
+    const maxR = Math.hypot(innerW, innerH) / 2;
+    const ringCount = Math.max(1, Math.round(Math.sqrt(count)));
+    const result: Instance[] = [];
+    let i = 0;
+    for (let ring = 0; ring < ringCount; ring++) {
+      const radius = ((ring + 0.6) / ringCount) * maxR;
+      const size = baseUnit * (0.8 + rng() * 0.5);
+      const perRing = ring === 0 ? 1 : Math.max(1, Math.round((TAU * radius) / (baseUnit * 1.2)));
+      const angleOffset = rng() * TAU;
+      for (let j = 0; j < perRing; j++) {
+        const a = angleOffset + (j / perRing) * TAU;
+        const cx = ccx + Math.cos(a) * radius;
+        const cy = ccy + Math.sin(a) * radius;
+        if (!inBleed(cx, cy)) continue;
+        if (intersectsExclusion(cx, cy, size)) continue;
+        result.push({
+          idx: i++,
+          cx,
+          cy,
+          size,
+          baseRot: Math.round((a + Math.PI / 2) / (Math.PI / 4)) * (Math.PI / 4),
+          shapeId: pickShape(),
+          colorHex: pickColor(),
+        });
+      }
+    }
+    return result;
+  }
+
+  // --- Anordnung 4: diagonaler Strom ---
+  // Shapes entlang paralleler 45°-Linien, in Stromrichtung ausgerichtet.
+  function placeDiagonal(): Instance[] {
+    const angle = Math.PI / 4;
+    const dirx = Math.cos(angle);
+    const diry = Math.sin(angle);
+    const perpx = -diry;
+    const perpy = dirx;
+    const lines = Math.max(1, Math.round(Math.sqrt(count)));
+    const perLine = Math.max(1, Math.round(count / lines));
+    const span = Math.hypot(innerW, innerH);
+    const lineSpacing = span / lines;
+    const stepAlong = span / perLine;
+    const ccx = innerX + innerW / 2;
+    const ccy = innerY + innerH / 2;
+    const result: Instance[] = [];
+    let i = 0;
+    for (let l = 0; l < lines; l++) {
+      const sOff = (l + 0.5 - lines / 2) * lineSpacing + (rng() - 0.5) * lineSpacing * 0.3;
+      for (let t = 0; t < perLine; t++) {
+        const size = baseUnit * (0.8 + rng() * 0.5);
+        const tOff = (t + 0.5 - perLine / 2) * stepAlong + (rng() - 0.5) * stepAlong * 0.2;
+        const cx = ccx + dirx * tOff + perpx * sOff;
+        const cy = ccy + diry * tOff + perpy * sOff;
+        if (!inBleed(cx, cy)) continue;
+        if (intersectsExclusion(cx, cy, size)) continue;
+        result.push({ idx: i++, cx, cy, size, baseRot: angle, shapeId: pickShape(), colorHex: pickColor() });
+      }
+    }
+    return result;
+  }
+
+  // Anordnung pro Shuffle auswürfeln: seedabhängig und seitenunabhängig (nur
+  // seedParam), damit jede Generierung zufällig zwischen den Stilen wechselt
+  // und Vorder-/Rückseite dieselbe Anordnung teilen.
+  const ARRANGEMENTS = ["scatter", "grid", "rings", "diagonal"] as const;
+  const arrangement = ARRANGEMENTS[Math.abs(hashString(`arrangement|${seedParam}`)) % ARRANGEMENTS.length];
+  const instances =
+    arrangement === "grid"
+      ? placeGrid()
+      : arrangement === "rings"
+        ? placeRings()
+        : arrangement === "diagonal"
+          ? placeDiagonal()
+          : placeScatter();
 
   // `candidates` ist bereits absteigend nach Größe sortiert, `instances`
   // erbt diese Reihenfolge: größere Elemente liegen unten, kleinere obenauf –
@@ -522,7 +622,7 @@ export function drawGrid(p5: p5Types, params: Params) {
 
   for (const inst of instances) {
     let { cx, cy, size } = inst;
-    let rot = angleStep;
+    let rot = inst.baseRot ?? angleStep;
 
     // Pro Element eine eigene, über die Loop-Phase nahtlose Bewegung. Die
     // stabile Generierungs-Id (inst.idx) sorgt dafür, dass jedes Element über
