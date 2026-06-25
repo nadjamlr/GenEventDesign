@@ -17,6 +17,30 @@ import { getGoogleFontUrl } from "@/lib/fonts";
 import { TEXT_STYLES } from "@/lib/textStyles";
 
 const STACK_GAP_RATIO = 0.04; // Abstand zwischen Vorder- und Rückseite, relativ zur Seitenhöhe
+const SHAPE_GRAIN_OPACITY = 0.1; // Stärke des Korns in den Shapes – bewusst dezent
+
+// Feines Schwarz/Weiß-Korn, das per "source-atop" nur auf bereits gefüllte
+// (deckende) Pixel zeichnet – bleibt also exakt auf die Shape-Silhouette
+// begrenzt, statt auch den transparenten Rand zu betreffen.
+function applyGrain(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const grain = ctx.createImageData(w, h);
+  const data = grain.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const v = Math.random() < 0.5 ? 0 : 255;
+    data[i] = v;
+    data[i + 1] = v;
+    data[i + 2] = v;
+    data[i + 3] = Math.random() * 255 * SHAPE_GRAIN_OPACITY;
+  }
+  const grainCanvas = document.createElement("canvas");
+  grainCanvas.width = w;
+  grainCanvas.height = h;
+  grainCanvas.getContext("2d")!.putImageData(grain, 0, 0);
+
+  ctx.globalCompositeOperation = "source-atop";
+  ctx.drawImage(grainCanvas, 0, 0);
+  ctx.globalCompositeOperation = "source-over";
+}
 
 // Bestmöglicher unterstützter WebM-Codec für die Video-Aufnahme.
 function pickVideoMime(): string {
@@ -176,6 +200,7 @@ export default function Canvas() {
       ctx.globalCompositeOperation = "source-in";
       ctx.fillStyle = colorHex;
       ctx.fillRect(0, 0, w, h);
+      applyGrain(ctx, w, h);
 
       tintedCache.set(key, pImg);
       return pImg;
