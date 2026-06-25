@@ -5,6 +5,7 @@ import p5 from "p5";
 import useDesignStore from "@/store/designStore";
 import {
   drawGrid,
+  resolveOverlayAreas,
   type ShapeImageProvider,
   type LogoImages,
   type AreaImageProvider,
@@ -17,6 +18,7 @@ import { getGoogleFontUrl } from "@/lib/fonts";
 import { TEXT_STYLES } from "@/lib/textStyles";
 
 const STACK_GAP_RATIO = 0.04; // Abstand zwischen Vorder- und Rückseite, relativ zur Seitenhöhe
+const AREA_DRAG_MARGIN_RATIO = 0.02; // Mindestabstand zum Rahmenrand beim Drag&Drop von Areas
 const SHAPE_GRAIN_OPACITY = 0.1; // Stärke des Korns in den Shapes – bewusst dezent
 
 // Feines Schwarz/Weiß-Korn, das per "source-atop" nur auf bereits gefüllte
@@ -72,6 +74,7 @@ export default function Canvas() {
     logoMode,
     animate,
     loopDuration,
+    setAreaPosition,
   } = useDesignStore();
 
   // ref hält immer die aktuellen Werte, ohne p5 neu erstellen zu müssen
@@ -115,6 +118,10 @@ export default function Canvas() {
   useEffect(() => {
     if (!containerRef.current) return;
 
+    // Im äußeren Scope (statt nur innerhalb des p5-Sketches), damit die
+    // Drag&Drop-Listener unten beim Cleanup wieder entfernt werden können.
+    let canvasElt: HTMLElement | undefined;
+
     function fittedSize() {
       const { width, height, cornerRadius, format } = paramsRef.current;
       const stacked = hasSides(format);
@@ -135,6 +142,109 @@ export default function Canvas() {
         stacked,
         layout,
       };
+    }
+
+    // Liefert für eine Seite ("front"/"back"/undefined bei einseitigen
+    // Formaten) den Versatz und die Größe ihrer Teilfläche innerhalb der
+    // sichtbaren Gesamt-Canvas – exakt wie p.image(frontGfx/backGfx, ...) sie
+    // platziert. Wird fürs Drag&Drop-Hit-Testing gebraucht.
+    function sideRegion(side: Side | undefined, fitted: ReturnType<typeof fittedSize>) {
+      if (!fitted.stacked || !side) {
+        return { offsetX: 0, offsetY: 0, w: fitted.w, h: fitted.h };
+      }
+      if (side === "front") return { offsetX: 0, offsetY: 0, w: fitted.sideW, h: fitted.sideH };
+      if (fitted.layout === "row") {
+        return { offsetX: fitted.sideW + fitted.gap, offsetY: 0, w: fitted.sideW, h: fitted.sideH };
+      }
+      return { offsetX: 0, offsetY: fitted.sideH + fitted.gap, w: fitted.sideW, h: fitted.sideH };
+    }
+
+    // Welche Seite ("front"/"back") liegt unter den gegebenen Canvas-Koordinaten?
+    // Bei einseitigen Formaten gibt es nur eine "Seite" (undefined).
+    function hitSide(x: number, y: number, fitted: ReturnType<typeof fittedSize>): Side | undefined {
+      if (!fitted.stacked) return undefined;
+      const front = sideRegion("front", fitted);
+      if (x >= front.offsetX && x <= front.offsetX + front.w && y >= front.offsetY && y <= front.offsetY + front.h) {
+        return "front";
+      }
+      return "back";
+    }
+
+    type DragState = { id: string; side: Side | undefined; w: number; h: number; grabDx: number; grabDy: number };
+    let dragState: DragState | null = null;
+
+    function clientToCanvas(clientX: number, clientY: number) {
+      const rect = canvasElt!.getBoundingClientRect();
+      return { x: clientX - rect.left, y: clientY - rect.top };
+    }
+
+    function findAreaAt(localX: number, localY: number, regionW: number, regionH: number) {
+      const resolved = resolveOverlayAreas(paramsRef.current.areas, regionW, regionH);
+      for (let i = resolved.length - 1; i >= 0; i--) {
+        const r = resolved[i];
+        if (localX >= r.x && localX <= r.x + r.w && localY >= r.y && localY <= r.y + r.h) {
+          return r;
+        }
+      }
+      return undefined;
+    }
+
+    // Text-/Bild-Areas lassen sich per Drag&Drop auf der Canvas verschieben –
+    // der Algorithmus (Ausschlusszone für die generativen Shapes) folgt der
+    // neuen Position automatisch, da resolveOverlayAreas() bei jedem Zeichnen
+    // neu aus dem Store gelesen wird.
+    function handleMouseDown(e: MouseEvent) {
+      const fitted = fittedSize();
+      const { x, y } = clientToCanvas(e.clientX, e.clientY);
+      const side = hitSide(x, y, fitted);
+      const region = sideRegion(side, fitted);
+      const localX = x - region.offsetX;
+      const localY = y - region.offsetY;
+      const hit = findAreaAt(localX, localY, region.w, region.h);
+      if (!hit) return;
+      dragState = {
+        id: hit.area.id,
+        side,
+        w: hit.w,
+        h: hit.h,
+        grabDx: localX - hit.x,
+        grabDy: localY - hit.y,
+      };
+      canvasElt!.style.cursor = "grabbing";
+      e.preventDefault();
+    }
+
+    function handleMouseMove(e: MouseEvent) {
+      const fitted = fittedSize();
+      const { x, y } = clientToCanvas(e.clientX, e.clientY);
+
+      if (!dragState) {
+        // Nur Hover-Cursor aktualisieren, solange nicht gezogen wird.
+        if (x < 0 || y < 0 || x > fitted.w || y > fitted.h) {
+          canvasElt!.style.cursor = "default";
+          return;
+        }
+        const side = hitSide(x, y, fitted);
+        const region = sideRegion(side, fitted);
+        const hit = findAreaAt(x - region.offsetX, y - region.offsetY, region.w, region.h);
+        canvasElt!.style.cursor = hit ? "grab" : "default";
+        return;
+      }
+
+      const region = sideRegion(dragState.side, fitted);
+      const localX = x - region.offsetX - dragState.grabDx;
+      const localY = y - region.offsetY - dragState.grabDy;
+      const marginX = region.w * AREA_DRAG_MARGIN_RATIO;
+      const marginY = region.h * AREA_DRAG_MARGIN_RATIO;
+      const clampedX = Math.min(Math.max(localX, marginX), Math.max(marginX, region.w - dragState.w - marginX));
+      const clampedY = Math.min(Math.max(localY, marginY), Math.max(marginY, region.h - dragState.h - marginY));
+      setAreaPosition(dragState.id, clampedX / region.w, clampedY / region.h);
+    }
+
+    function handleMouseUp() {
+      if (!dragState) return;
+      dragState = null;
+      canvasElt!.style.cursor = "default";
     }
 
     // Rohbilder (unverändertes schwarzes Silhouetten-SVG) pro Shape-Id.
@@ -346,8 +456,11 @@ export default function Canvas() {
       const url = getGoogleFontUrl(weight);
       if (fontCache.has(url) || loadingUrls.has(url)) return;
       loadingUrls.add(url);
-      p.loadFont(
-        url,
+      // p5 v2's loadFont() ruft die Success/Error-Callbacks nur für direkte
+      // Font-Dateien auf – bei einer Google-Fonts-CSS2-URL (unser Fall) wird
+      // intern nur das zurückgegebene Promise aufgelöst, die Callbacks bleiben
+      // ungenutzt. Deshalb hier auf das Promise statt auf Callbacks verlassen.
+      p.loadFont(url).then(
         (font) => {
           fontCache.set(url, font);
           loadingUrls.delete(url);
@@ -364,8 +477,6 @@ export default function Canvas() {
     }
 
     const instance = new p5((p: p5) => {
-      let canvasElt: HTMLElement;
-
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
         getImage: (id, colorHex, targetSize) => getTintedImage(p, id, colorHex, targetSize),
@@ -393,6 +504,10 @@ export default function Canvas() {
         loadLogoVariant(p, "/logoShapes/Logo_NRLY_Icon_White.svg", (img) => {
           logoImages.icon!.white = img;
         });
+
+        canvasElt.addEventListener("mousedown", handleMouseDown);
+        window.addEventListener("mousemove", handleMouseMove);
+        window.addEventListener("mouseup", handleMouseUp);
       };
       p.draw = () => {
         if (exportingVideo) return; // sichtbare Schleife während des Exports anhalten
@@ -400,7 +515,7 @@ export default function Canvas() {
         if (p.width !== w || p.height !== h) {
           p.resizeCanvas(w, h);
         }
-        canvasElt.style.borderRadius = `${cornerRadius}px`;
+        canvasElt!.style.borderRadius = `${cornerRadius}px`;
         const areaShapeIds = paramsRef.current.areas
           .filter((a): a is AreaDef & { shapeId: string } => !!a.shapeId)
           .map((a) => a.shapeId);
@@ -594,6 +709,9 @@ export default function Canvas() {
       exportRegistry.render = null;
       exportRegistry.renderVideo = null;
       exportRegistry.renderFrame = null;
+      canvasElt?.removeEventListener("mousedown", handleMouseDown);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
       frontGfx?.remove();
       backGfx?.remove();
       instance.remove();

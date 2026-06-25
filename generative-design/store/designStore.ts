@@ -43,6 +43,7 @@ type DesignStore = {
   addArea: (area: Omit<AreaDef, "id">) => void;
   removeArea: (id: string) => void;
   toggleAreaGrayscale: (id: string) => void;
+  setAreaPosition: (id: string, x: number, y: number) => void;
 };
 
 const useDesignStore = create<DesignStore>((set) => ({
@@ -120,6 +121,10 @@ const useDesignStore = create<DesignStore>((set) => ({
       areas: state.areas.map((a) =>
         a.id === id ? { ...a, grayscale: !a.grayscale } : a
       ),
+    })),
+  setAreaPosition: (id, x, y) =>
+    set((state) => ({
+      areas: state.areas.map((a) => (a.id === id ? { ...a, x, y } : a)),
     })),
 }));
 

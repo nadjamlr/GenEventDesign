@@ -18,7 +18,7 @@ export const FORMAT_SIZES: Record<string, FormatSize> = {
   // DIN lang: 105 x 210 mm
   Flyer: { width: 500, height: 1000, defaultExportType: "pdf", hasSides: true, sideLayout: "row" },
   Video: { width: 1920, height: 1080 },
-  "Business Card": { width: 1000, height: 648, defaultExportType: "pdf", hasSides: true },
+  "Business Card": { width: 648, height: 1000, defaultExportType: "pdf", hasSides: true, sideLayout: "row" },
   Ticket: { width: 1000, height: 400, defaultExportType: "pdf", hasSides: true },
   Voucher: { width: 1000, height: 500, defaultExportType: "pdf", hasSides: true },
   Sticker: { width: 800, height: 800, defaultExportType: "png" },

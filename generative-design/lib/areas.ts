@@ -16,6 +16,12 @@ export type AreaDef = {
   shapeId?: string; // Maskenform bei kind === "image"
   imageDataUrl?: string; // hochgeladenes Bild bei kind === "image"
   grayscale?: boolean; // Bild schwarz/weiß darstellen
+  /**
+   * Position oben-links, als Anteil (0..1) der Rahmenbreite/-höhe – wird beim
+   * Drag&Drop auf der Canvas gesetzt und überschreibt dann den "anchor".
+   */
+  x?: number;
+  y?: number;
 };
 
 export const DEFAULT_TEXT_AREA_SIZE = { widthRatio: 0.4, heightRatio: 0.2 };

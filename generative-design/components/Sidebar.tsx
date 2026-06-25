@@ -33,6 +33,7 @@ const EXPORT_TYPES = ["png", "pdf"] as const;
 const SIDES: Side[] = ["front", "back"];
 const AREA_KINDS: AreaKind[] = ["text", "image"];
 const NO_IMAGE_AREA_FORMATS = ["Business Card", "Ticket", "Voucher"];
+const NO_AREAS_FORMATS = ["Business Card"];
 const LOGO_MODES: LogoMode[] = ["random", "logo", "icon"];
 const LOGO_MODE_LABELS: Record<LogoMode, string> = { random: "Random", logo: "Logo", icon: "Icon" };
 const ANCHOR_OPTIONS = ALL_ANCHORS.map((a) => ANCHOR_LABELS[a]);
@@ -218,7 +219,11 @@ export default function Sidebar() {
 
   const colors = [...DEFAULT_COLORS, ...customColors.map((hex) => ({ id: hex, hex }))];
   const formatHasSides = hasSides(format);
-  const inputFields = getInputFields(format, formatHasSides ? side : undefined);
+  // Felder mit defaultValue sind schon ohne Eingabe sichtbar (siehe grid.ts
+  // resolveFieldText) – sie müssen also nicht zusätzlich in der Sidebar editierbar sein.
+  const inputFields = getInputFields(format, formatHasSides ? side : undefined).filter(
+    (field) => field.defaultValue === undefined
+  );
   const showInputSection = inputFields.length > 0;
 
   return (
@@ -321,9 +326,11 @@ export default function Sidebar() {
           </div>
         </RulerSection>
 
-        <SeparationLine/>
+        {!NO_AREAS_FORMATS.includes(format) && (
+          <>
+            <SeparationLine/>
 
-        <RulerSection heading="Areas">
+            <RulerSection heading="Areas">
           <RulerItem label="Kind">
             <div className="flex gap-2 w-full">
               {availableAreaKinds.map((kind) => (
@@ -445,7 +452,9 @@ export default function Sidebar() {
               ))}
             </div>
           )}
-        </RulerSection>
+            </RulerSection>
+          </>
+        )}
 
         {showInputSection && (
           <>

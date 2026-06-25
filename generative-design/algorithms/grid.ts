@@ -1,9 +1,10 @@
 import type p5Types from "p5";
 import { getLogoZones, getAnchorBox } from "@/lib/logoPlacement";
 import type { AreaDef } from "@/lib/areas";
-import { getInputFields, getInputLayout } from "@/lib/inputFields";
+import { getInputFields, getInputLayout, type InputFieldDef } from "@/lib/inputFields";
 import { hasSides, type Side } from "@/lib/formats";
 import { getTextStyle } from "@/lib/textStyles";
+import { getTextColor, type TextColorName } from "@/lib/textColors";
 
 export type ShapeImageProvider = {
   isReady: (id: string) => boolean;
@@ -188,6 +189,57 @@ function pickTextColor(brightness: number): string {
   return "#808080";
 }
 
+// Farbrolle eines Eingabefeldes (siehe lib/textColors.ts) in eine konkrete
+// Füllfarbe übersetzen: "default" wie bisher die passende Kontrastfarbe,
+// "grey" dieselbe schwarz/weiße Kontrastfarbe, aber abgeschwächt (Alpha) –
+// für untergeordnete Felder (z.B. Adresse), die sich von der Haupt-Info
+// abheben sollen, ohne die mittlere Graustufe von pickTextColor zu nutzen.
+function resolveFieldTextColor(brightness: number, color?: TextColorName): string {
+  if ((color ?? "default") === "default") return pickTextColor(brightness);
+  const { alpha } = getTextColor(color);
+  const base = brightness > 127 ? 0 : 255;
+  return `rgba(${base}, ${base}, ${base}, ${alpha})`;
+}
+
+// Anzuzeigender Text eines Eingabefeldes: bei locked-Feldern immer der feste
+// Wert. Bei editierbaren Feldern der eingegebene Wert – ist noch nichts
+// eingegeben, wird (falls vorhanden) der defaultValue als Vorbelegung
+// angezeigt, statt das Feld leer zu lassen (z.B. Adresse/"P:"-Label, die
+// schon mit einem sinnvollen Wert vorbelegt sind).
+function resolveFieldText(field: InputFieldDef, inputValues: Record<string, string>): string | undefined {
+  if (field.locked) return field.defaultValue;
+  const typed = inputValues[field.key];
+  return typed && typed.trim() !== "" ? typed : field.defaultValue;
+}
+
+export type ResolvedArea = { area: AreaDef; x: number; y: number; w: number; h: number };
+
+// Berechnet Position & Größe aller frei platzierten Areas (Text/Bild, ohne
+// "background") innerhalb eines innerW×innerH-Rahmens. Wird sowohl beim
+// Zeichnen (drawGrid) als auch fürs Drag&Drop-Hit-Testing auf der Canvas
+// verwendet, damit beide exakt dieselben Boxen ergeben.
+export function resolveOverlayAreas(areas: AreaDef[], innerW: number, innerH: number): ResolvedArea[] {
+  const padding = innerW * PADDING_RATIO;
+  const overlayAreas = areas.filter(
+    (a): a is AreaDef & { anchor: Exclude<AreaDef["anchor"], "background"> } => a.anchor !== "background"
+  );
+  return overlayAreas.map((area) => {
+    const isUnmaskedImage = area.kind === "image" && !area.shapeId;
+    const squareSide = Math.min(innerW, innerH) * area.widthRatio;
+    const w = isUnmaskedImage ? squareSide : innerW * area.widthRatio;
+    const h = isUnmaskedImage ? squareSide : innerH * area.heightRatio;
+    let x: number;
+    let y: number;
+    if (area.x !== undefined && area.y !== undefined) {
+      x = area.x * innerW;
+      y = area.y * innerH;
+    } else {
+      ({ x, y } = getAnchorBox(area.anchor, 0, 0, innerW, innerH, w, h, padding));
+    }
+    return { area, x, y, w, h };
+  });
+}
+
 // Hier schreibst du deinen Algorithmus.
 // p5 ist die p5.js Instanz, params kommen aus dem Store.
 export function drawGrid(p5: p5Types, params: Params) {
@@ -224,7 +276,17 @@ export function drawGrid(p5: p5Types, params: Params) {
     const style = getTextStyle(styleName);
     const font = fontProvider?.(style.weight);
     if (font) p5.textFont(font);
-    return baseSize * style.sizeMultiplier;
+    // textFont() setzt nur die Font-Family (alle Weight-Varianten teilen denselben
+    // Namen, z.B. "Poppins") – das tatsächliche Render-Gewicht ist ein eigener,
+    // unabhängiger State und muss separat gesetzt werden, sonst bleibt es immer
+    // beim zuletzt gesetzten bzw. dem Default-Gewicht.
+    p5.textWeight(style.weight);
+    const finalSize = baseSize * style.sizeMultiplier;
+    // Buchstabenabstand in px statt em setzen, damit er unabhängig davon korrekt
+    // ist, ob die Canvas-Engine ihn vor oder nach dem folgenden textSize()-Aufruf
+    // auswertet (em wäre relativ zur jeweils *aktuellen* Schriftgröße).
+    p5.textProperty("letterSpacing", `${(style.letterSpacing ?? 0) * finalSize}px`);
+    return finalSize;
   }
 
   const availableShapes = shapeImages
@@ -266,9 +328,6 @@ export function drawGrid(p5: p5Types, params: Params) {
   const backgroundArea = areas
     .filter((a) => a.kind === "image" && a.anchor === "background")
     .pop();
-  const overlayAreas = areas.filter(
-    (a): a is AreaDef & { anchor: Exclude<AreaDef["anchor"], "background"> } => a.anchor !== "background"
-  );
 
   if (backgroundArea && areaImages) {
     const bgImg = areaImages.getBackgroundImage(backgroundArea, innerW, innerH);
@@ -279,17 +338,7 @@ export function drawGrid(p5: p5Types, params: Params) {
   }
 
   // Feste Areas (Text/Bild) bleiben von den generativen Shapes frei.
-  // Bild-Areas ohne Maskenform ("No Shape") werden quadratisch eingesetzt,
-  // statt sich an das (ggf. nicht-quadratische) Seitenverhältnis des Rahmens
-  // anzupassen.
-  const resolvedAreas = overlayAreas.map((area) => {
-    const isUnmaskedImage = area.kind === "image" && !area.shapeId;
-    const squareSide = Math.min(innerW, innerH) * area.widthRatio;
-    const w = isUnmaskedImage ? squareSide : innerW * area.widthRatio;
-    const h = isUnmaskedImage ? squareSide : innerH * area.heightRatio;
-    const { x, y } = getAnchorBox(area.anchor, innerX, innerY, innerW, innerH, w, h, padding);
-    return { area, x, y, w, h };
-  });
+  const resolvedAreas = resolveOverlayAreas(areas, innerW, innerH);
 
   // Eingabefelder aus der Sidebar (z.B. Name/Position/Adresse bei der Business
   // Card) – nur ausgefüllte bzw. feste Werte werden gezeichnet, leere Felder
@@ -303,22 +352,26 @@ export function drawGrid(p5: p5Types, params: Params) {
 
   const resolvedPositionedFields = positionedFields
     .map((field) => {
-      const text = field.locked ? field.defaultValue : inputValues[field.key];
+      const text = resolveFieldText(field, inputValues);
       if (!text || text.trim() === "") return undefined;
-      const w = innerW * POSITIONED_FIELD_WIDTH_RATIO;
-      const h = innerH * POSITIONED_FIELD_HEIGHT_RATIO;
-      const { x, y } = getAnchorBox(field.position!.anchor, innerX, innerY, innerW, innerH, w, h, padding);
+      const pos = field.position!;
+      const w = innerW * (pos.widthRatio ?? POSITIONED_FIELD_WIDTH_RATIO);
+      const h = innerH * (pos.heightRatio ?? POSITIONED_FIELD_HEIGHT_RATIO);
+      const x = innerX + pos.x * innerW;
+      const y = innerY + pos.y * innerH;
       return { field, text, x, y, w, h };
     })
     .filter((v): v is NonNullable<typeof v> => !!v);
 
   const inputLines = stackedFields
     .map((field) => ({
-      text: field.locked ? field.defaultValue : inputValues[field.key],
+      text: resolveFieldText(field, inputValues),
       style: field.style,
+      color: field.color,
     }))
     .filter(
-      (line): line is { text: string; style: typeof line.style } => !!line.text && line.text.trim() !== ""
+      (line): line is { text: string; style: typeof line.style; color: typeof line.color } =>
+        !!line.text && line.text.trim() !== ""
     );
   const inputLayout = getInputLayout(format, activeSide);
   const inputBox =
@@ -524,9 +577,12 @@ export function drawGrid(p5: p5Types, params: Params) {
       const brightness = sampleBrightness(p5, x, y, w, h);
       p5.noStroke();
       p5.fill(pickTextColor(brightness));
-      p5.textAlign(p5.CENTER, p5.CENTER);
+      // Linksbündig statt zentriert: die Box-Kante (= Drag&Drop-Position)
+      // entspricht damit direkt der Text-Kante, ohne "Leerraum" durch
+      // Zentrierung in einer breiteren Box.
+      p5.textAlign(p5.LEFT, p5.CENTER);
       p5.textSize(applyTextStyle("p1", Math.min(w, h) * 0.16));
-      p5.text(area.text ?? "", x + w / 2, y + h / 2, w, h);
+      p5.text(area.text ?? "", x, y, w, h);
     } else if (area.kind === "image" && areaImages) {
       const img = areaImages.getImage(area, w, h);
       if (img) {
@@ -541,7 +597,7 @@ export function drawGrid(p5: p5Types, params: Params) {
   for (const { field, text, x, y, w, h } of resolvedPositionedFields) {
     const brightness = sampleBrightness(p5, x, y, w, h);
     p5.noStroke();
-    p5.fill(pickTextColor(brightness));
+    p5.fill(resolveFieldTextColor(brightness, field.color));
     const align = field.position!.align ?? "left";
     const alignX = align === "left" ? p5.LEFT : align === "right" ? p5.RIGHT : p5.CENTER;
     p5.textAlign(alignX, p5.CENTER);
@@ -556,7 +612,6 @@ export function drawGrid(p5: p5Types, params: Params) {
     const { x, y, w, h } = inputBox;
     const brightness = sampleBrightness(p5, x, y, w, h);
     p5.noStroke();
-    p5.fill(pickTextColor(brightness));
 
     const lineHeight = h / inputLines.length;
     const baseSize = Math.min(lineHeight * 0.6, w * 0.09);
@@ -565,6 +620,7 @@ export function drawGrid(p5: p5Types, params: Params) {
     p5.textAlign(alignX, p5.CENTER);
     const tx = inputLayout.align === "left" ? x : inputLayout.align === "right" ? x + w : x + w / 2;
     inputLines.forEach((line, i) => {
+      p5.fill(resolveFieldTextColor(brightness, line.color));
       p5.textSize(applyTextStyle(line.style, baseSize));
       p5.text(line.text, tx, y + lineHeight * (i + 0.5));
     });
