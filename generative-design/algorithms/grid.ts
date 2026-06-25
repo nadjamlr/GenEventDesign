@@ -67,11 +67,8 @@ const MAX_PLACEMENT_ATTEMPTS = 24; // Versuche pro Element, eine Position mit ge
 
 // Bewegungs-Amplituden für die Animation, relativ zur Elementgröße (baseUnit)
 // bzw. als absolute Faktoren.
-const MOTION_DRIFT = 0.45; // organische Eigen-Bewegung pro Element, relativ zu baseUnit
 const MOTION_PULSE = 0.5; // max. Größen-Pulsieren
-const MOTION_ROT_WOBBLE = Math.PI / 12; // kleines organisches Wackeln zusätzlich zur Haupt-Rotation
-const SWAY_AMOUNT = 0.3; // gemeinsames Schwingen der ganzen Komposition (Lissajous-Bahn), relativ zu baseUnit
-const SPIN_BASE = 2; // Basiswert für die größenabhängige Umdrehungszahl – kleinere Elemente drehen schneller (Parallaxe/Tiefenwirkung)
+const SQUASH_AMOUNT = 0.35; // max. Stauchung beim Squash & Stretch (0 = aus, 1 = extrem)
 const TAU = Math.PI * 2;
 
 function hashString(str: string): number {
@@ -662,6 +659,87 @@ export function drawGrid(p5: p5Types, params: Params) {
     return result;
   }
 
+  // --- Anordnung 7: Circle-Packing (Wachstums-Simulation) ---
+  // Kreise wachsen iterativ aus zufälligen Startpunkten, bis sie sich
+  // gegenseitig, die Ränder oder Ausschlusszonen berühren – eine emergente,
+  // dicht gepackte Komposition mit natürlicher Größenhierarchie (große Kreise
+  // in offenen Flächen, kleine füllen die Lücken). Anders als die übrigen
+  // Anordnungen ergibt sich die Größe hier aus der Simulation, nicht vorab.
+  function placePacking(): Instance[] {
+    type Circle = { x: number; y: number; r: number; grow: number; idx: number; live: boolean };
+    const minR = Math.max(2, baseUnit * 0.18);
+    const maxR = baseUnit * 1.6;
+    const ITERATIONS = 18;
+    const cell = Math.max(1, maxR);
+
+    const circles: Circle[] = [];
+    for (let i = 0; i < count; i++) {
+      const x = innerX - bleedX + rng() * (innerW + bleedX * 2);
+      const y = innerY - bleedY + rng() * (innerH + bleedY * 2);
+      if (intersectsExclusion(x, y, minR * 2)) continue; // Startpunkt in Sperrzone
+      circles.push({ x, y, r: minR, grow: minR * (0.4 + rng() * 0.9), idx: i, live: true });
+    }
+
+    // Jede Iteration: Kreise, die noch wachsen dürfen, einen Schritt vergrößern;
+    // wer Nachbar/Rand/Sperrzone berühren würde, hört auf zu wachsen.
+    for (let it = 0; it < ITERATIONS; it++) {
+      const grid = new Map<string, Circle[]>();
+      for (const c of circles) {
+        const key = cellKey(Math.floor(c.x / cell), Math.floor(c.y / cell));
+        const bucket = grid.get(key);
+        if (bucket) bucket.push(c);
+        else grid.set(key, [c]);
+      }
+      for (const c of circles) {
+        if (!c.live) continue;
+        const nr = c.r + c.grow;
+        if (
+          nr > maxR ||
+          c.x - nr < innerX - bleedX ||
+          c.x + nr > innerX + innerW + bleedX ||
+          c.y - nr < innerY - bleedY ||
+          c.y + nr > innerY + innerH + bleedY ||
+          intersectsExclusion(c.x, c.y, nr * 2)
+        ) {
+          c.live = false;
+          continue;
+        }
+        const ix = Math.floor(c.x / cell);
+        const iy = Math.floor(c.y / cell);
+        let blocked = false;
+        for (let dx = -1; dx <= 1 && !blocked; dx++) {
+          for (let dy = -1; dy <= 1 && !blocked; dy++) {
+            const bucket = grid.get(cellKey(ix + dx, iy + dy));
+            if (!bucket) continue;
+            for (const o of bucket) {
+              if (o === c) continue;
+              const ddx = c.x - o.x;
+              const ddy = c.y - o.y;
+              if (ddx * ddx + ddy * ddy < (nr + o.r) * (nr + o.r)) {
+                blocked = true;
+                break;
+              }
+            }
+          }
+        }
+        if (blocked) c.live = false;
+        else c.r = nr;
+      }
+    }
+
+    return circles
+      .filter((c) => c.r > minR * 1.05) // winzige Reste weglassen
+      .map((c) => ({
+        idx: c.idx,
+        cx: c.x,
+        cy: c.y,
+        size: c.r * 2,
+        baseRot: Math.floor(rng() * 8) * (Math.PI / 4),
+        shapeId: pickShape(),
+        colorHex: pickColor(),
+      }));
+  }
+
   // Anordnung pro Shuffle auswürfeln: seedabhängig und seitenunabhängig (nur
   // seedParam), damit jede Generierung zufällig zwischen den Stilen wechselt
   // und Vorder-/Rückseite dieselbe Anordnung teilen.
@@ -672,6 +750,7 @@ export function drawGrid(p5: p5Types, params: Params) {
     "diagonal",
     "wave",
     "border",
+    "packing",
   ] as const;
   const arrangement = ARRANGEMENTS[Math.abs(hashString(`arrangement|${seedParam}`)) % ARRANGEMENTS.length];
   const placers: Record<(typeof ARRANGEMENTS)[number], () => Instance[]> = {
@@ -681,6 +760,7 @@ export function drawGrid(p5: p5Types, params: Params) {
     diagonal: placeDiagonal,
     wave: placeWave,
     border: placeBorder,
+    packing: placePacking,
   };
   const instances = (placers[arrangement] ?? placeScatter)();
 
@@ -690,8 +770,11 @@ export function drawGrid(p5: p5Types, params: Params) {
   // Gewusel.
 
   for (const inst of instances) {
-    let { cx, cy, size } = inst;
-    let rot = inst.baseRot ?? angleStep;
+    const { cx, cy } = inst;
+    let { size } = inst;
+    const rot = inst.baseRot ?? angleStep;
+    let sx = 1;
+    let sy = 1;
 
     // Pro Element eine eigene, über die Loop-Phase nahtlose Bewegung. Die
     // stabile Generierungs-Id (inst.idx) sorgt dafür, dass jedes Element über
@@ -699,29 +782,17 @@ export function drawGrid(p5: p5Types, params: Params) {
     if (animate) {
       const k = inst.idx * 1.7;
 
-      // Gemeinsames Schwingen der ganzen Komposition auf einer Lissajous-Bahn
-      // (x mit einfacher, y mit doppelter Frequenz) – alle Elemente bewegen
-      // sich zusätzlich im Verbund, statt nur unabhängig voneinander zu
-      // wackeln. Beide Komponenten sind bei phase 0 und 1 exakt 0, damit das
-      // Loop nahtlos bleibt und der statische Stand unverändert bleibt.
-      cx += Math.sin(TAU * phase) * baseUnit * SWAY_AMOUNT;
-      cy += Math.sin(TAU * phase * 2) * baseUnit * SWAY_AMOUNT * 0.6;
-
-      // Eigene, über die Loop-Phase nahtlose Restbewegung für organische
-      // Varianz zusätzlich zum gemeinsamen Schwingen.
-      cx += loopDelta(seed, k, 11.3, phase) * baseUnit * MOTION_DRIFT;
-      cy += loopDelta(seed, k + 50, 23.7, phase) * baseUnit * MOTION_DRIFT;
+      // Dezentes, gleichmäßiges Größen-Pulsieren zusätzlich zum Squash.
       size *= 1 + loopDelta(seed, k + 99, 7.1, phase) * MOTION_PULSE;
 
-      // Kontinuierliche Rotation statt nur Wackeln: kleinere Elemente drehen
-      // sich schneller als große (Parallaxe/Tiefenwirkung). Die Umdrehungszahl
-      // ist ganzzahlig, damit die Rotation bei phase=1 wieder exakt auf dem
-      // Startwinkel landet (mod 360°) und die Schleife nahtlos bleibt.
-      const relSize = inst.size / baseUnit;
-      const spins = Math.max(1, Math.round(SPIN_BASE / Math.max(0.4, relSize)));
-      const dir = hash2(inst.idx, 77, seed) < 0.5 ? 1 : -1;
-      rot += dir * spins * TAU * phase;
-      rot += loopDelta(seed, k + 200, 3.3, phase) * MOTION_ROT_WOBBLE;
+      // Squash & Stretch statt Rotation: die Shape staucht sich (kürzer +
+      // breiter) und federt wieder in ihre Ausgangsform zurück. cos-basiert,
+      // daher bei phase 0/1 exakt neutral (nahtlose Schleife). Ein Teil der
+      // Shapes pulsiert doppelt so schnell – für organische Varianz.
+      const squashCycles = hash2(inst.idx, 33, seed) < 0.5 ? 1 : 2;
+      const squash = ((1 - Math.cos(TAU * phase * squashCycles)) / 2) * SQUASH_AMOUNT;
+      sx = 1 + squash;
+      sy = 1 - squash;
     }
 
     const img =
@@ -732,6 +803,7 @@ export function drawGrid(p5: p5Types, params: Params) {
     p5.push();
     p5.translate(cx, cy);
     p5.rotate(rot);
+    p5.scale(sx, sy);
 
     if (img) {
       const fit = Math.min(size / img.width, size / img.height);
