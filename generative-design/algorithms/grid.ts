@@ -444,8 +444,14 @@ export function drawGrid(p5: p5Types, params: Params) {
   // Gemeinsame Helfer für alle Anordnungen.
   const pickShape = () =>
     availableShapes.length > 0 ? availableShapes[Math.floor(rng() * availableShapes.length)] : undefined;
+  // Kontrastregel: Shapes nie in der Hintergrundfarbe einfärben (sonst gehen sie
+  // im Untergrund unter). Nur wenn dadurch keine Farbe übrig bliebe (z.B. genau
+  // eine Farbe ausgewählt, die zugleich Hintergrund ist), auf die volle Palette
+  // bzw. die Primärfarbe zurückfallen.
+  const shapeColorPool = selectedColors.filter((c) => c !== bgColorHex);
+  const colorPool = shapeColorPool.length > 0 ? shapeColorPool : selectedColors;
   const pickColor = () =>
-    selectedColors.length > 0 ? selectedColors[Math.floor(rng() * selectedColors.length)] : FALLBACK_COLOR;
+    colorPool.length > 0 ? colorPool[Math.floor(rng() * colorPool.length)] : FALLBACK_COLOR;
   const intersectsExclusion = (cx: number, cy: number, size: number) =>
     exclusionRects.some(({ x, y, w, h }) =>
       rectsOverlap(cx - size / 2, cy - size / 2, size, size, x, y, w, h)
