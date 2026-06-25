@@ -12,9 +12,9 @@ export type TextStyle = {
 };
 
 export const TEXT_STYLES: Record<TextStyleName, TextStyle> = {
-  h1: { sizeMultiplier: 2.2, weight: 900 },
-  h2: { sizeMultiplier: 2.2, weight: 900 },
-  h3: { sizeMultiplier: 1.4, weight: 600 },
+  h1: { sizeMultiplier: 1.8, weight: 900 },
+  h2: { sizeMultiplier: 1.4, weight: 900 },
+  h3: { sizeMultiplier: 1.2, weight: 600 },
   p1: { sizeMultiplier: 1, weight: 400 },
   p2: { sizeMultiplier: 0.8, weight: 500 },
 };

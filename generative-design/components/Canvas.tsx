@@ -254,12 +254,14 @@ export default function Canvas() {
     // ("sehr hoch skaliert"), das Foto ist nur innerhalb ihrer Form sichtbar.
     function getMaskedAreaImage(p: p5, area: AreaDef, w: number, h: number): p5.Image | undefined {
       const photo = areaPhotoImages.get(area.id);
+      if (!photo) return undefined;
+      // Ohne shapeId ("No Shape") wird das Foto nur cover-skaliert, ohne Maske.
       const mask = area.shapeId ? rawImages.get(area.shapeId) : undefined;
-      if (!photo || !mask) return undefined;
+      if (area.shapeId && !mask) return undefined;
 
       const rw = Math.round(w);
       const rh = Math.round(h);
-      const key = `${area.id}|${rw}|${rh}`;
+      const key = `${area.id}|${rw}|${rh}|${area.grayscale ? 1 : 0}`;
       const cached = areaMaskedCache.get(key);
       if (cached) return cached;
 
@@ -267,16 +269,20 @@ export default function Canvas() {
       const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D })
         .drawingContext;
 
+      ctx.filter = area.grayscale ? "grayscale(1)" : "none";
       const photoScale = Math.max(rw / photo.naturalWidth, rh / photo.naturalHeight);
       const pw = photo.naturalWidth * photoScale;
       const ph = photo.naturalHeight * photoScale;
       ctx.drawImage(photo, (rw - pw) / 2, (rh - ph) / 2, pw, ph);
+      ctx.filter = "none";
 
-      ctx.globalCompositeOperation = "destination-in";
-      const maskScale = Math.max(rw / mask.naturalWidth, rh / mask.naturalHeight);
-      const mw = mask.naturalWidth * maskScale;
-      const mh = mask.naturalHeight * maskScale;
-      ctx.drawImage(mask, (rw - mw) / 2, (rh - mh) / 2, mw, mh);
+      if (mask) {
+        ctx.globalCompositeOperation = "destination-in";
+        const maskScale = Math.max(rw / mask.naturalWidth, rh / mask.naturalHeight);
+        const mw = mask.naturalWidth * maskScale;
+        const mh = mask.naturalHeight * maskScale;
+        ctx.drawImage(mask, (rw - mw) / 2, (rh - mh) / 2, mw, mh);
+      }
 
       areaMaskedCache.set(key, pImg);
       return pImg;
@@ -295,17 +301,19 @@ export default function Canvas() {
 
       const rw = Math.round(w);
       const rh = Math.round(h);
-      const key = `${area.id}|${rw}|${rh}`;
+      const key = `${area.id}|${rw}|${rh}|${area.grayscale ? 1 : 0}`;
       const cached = areaBgCache.get(key);
       if (cached) return cached;
 
       const pImg = p.createImage(rw, rh);
       const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D })
         .drawingContext;
+      ctx.filter = area.grayscale ? "grayscale(1)" : "none";
       const scale = Math.max(rw / photo.naturalWidth, rh / photo.naturalHeight);
       const pw = photo.naturalWidth * scale;
       const ph = photo.naturalHeight * scale;
       ctx.drawImage(photo, (rw - pw) / 2, (rh - ph) / 2, pw, ph);
+      ctx.filter = "none";
 
       areaBgCache.set(key, pImg);
       return pImg;

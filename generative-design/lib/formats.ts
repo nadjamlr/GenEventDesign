@@ -25,7 +25,7 @@ export const FORMAT_SIZES: Record<string, FormatSize> = {
   Skateboard: { width: 250, height: 1000, cornerRadius: 110, defaultExportType: "pdf" },
 };
 
-export const DEFAULT_FORMAT = "Flyer";
+export const DEFAULT_FORMAT = "Social Post";
 
 export function hasSides(format: string): boolean {
   return !!FORMAT_SIZES[format]?.hasSides;

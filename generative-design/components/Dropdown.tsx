@@ -6,12 +6,15 @@ import { ChevronDown } from "lucide-react";
 type DropdownProps = {
   label?: string;
   fields?: string[];
+  /** Wenn gesetzt, zeigt das Dropdown diesen Wert an (controlled), statt nur die eigene Auswahl zu merken. */
+  value?: string | null;
   onChange?: (value: string) => void;
 };
 
-export default function Dropdown({ label = "Choose", fields = [], onChange }: DropdownProps) {
+export default function Dropdown({ label = "Choose", fields = [], value, onChange }: DropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [internalSelected, setInternalSelected] = useState<string | null>(null);
+  const selected = value !== undefined ? value : internalSelected;
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -25,7 +28,7 @@ export default function Dropdown({ label = "Choose", fields = [], onChange }: Dr
   }, []);
 
   function handleSelect(value: string) {
-    setSelected(value);
+    setInternalSelected(value);
     setIsOpen(false);
     onChange?.(value);
   }

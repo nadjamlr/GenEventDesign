@@ -12,8 +12,10 @@ import RulerSection from "./RulerSection"
 import SeparationLine from "./SeperationLine"
 import ShapeButton from "./ShapeButton"
 import ColorButton from "./ColorButton"
+import GalleryImageButton from "./GalleryImageButton"
 import useDesignStore from "@/store/designStore"
 import { shapes } from "@/lib/shapes"
+import { GALLERY_IMAGES } from "@/lib/galleryImages"
 import { DEFAULT_COLORS, normalizeHex } from "@/lib/colors"
 import { exportRegistry } from "@/lib/canvasExport"
 import { getInputFields } from "@/lib/inputFields"
@@ -34,8 +36,9 @@ const NO_IMAGE_AREA_FORMATS = ["Business Card", "Ticket", "Voucher"];
 const LOGO_MODES: LogoMode[] = ["random", "logo", "icon"];
 const LOGO_MODE_LABELS: Record<LogoMode, string> = { random: "Random", logo: "Logo", icon: "Icon" };
 const ANCHOR_OPTIONS = ALL_ANCHORS.map((a) => ANCHOR_LABELS[a]);
-const SHAPE_OPTIONS = shapes.map((s) => s.label);
-const BACKGROUND_LABEL = "Hintergrund";
+const NO_SHAPE_LABEL = "No Shape";
+const SHAPE_OPTIONS = [NO_SHAPE_LABEL, ...shapes.map((s) => s.label)];
+const BACKGROUND_LABEL = "Background";
 
 function labelToAnchor(label: string): AreaAnchor {
   if (label === BACKGROUND_LABEL) return "background";
@@ -43,6 +46,7 @@ function labelToAnchor(label: string): AreaAnchor {
 }
 
 function labelToShapeId(label: string): string | undefined {
+  if (label === NO_SHAPE_LABEL) return undefined;
   return shapes.find((s) => s.label === label)?.id;
 }
 
@@ -64,12 +68,12 @@ export default function Sidebar() {
     selectedColors,
     toggleColor,
     addCustomColor,
-    regenerate,
     inputValues,
     setInputValue,
     areas,
     addArea,
     removeArea,
+    toggleAreaGrayscale,
     side,
     setSide,
     logoEnabled,
@@ -91,6 +95,7 @@ export default function Sidebar() {
   const [areaShapeId, setAreaShapeId] = useState<string | undefined>(shapes[0]?.id);
   const [areaText, setAreaText] = useState("");
   const [areaImageDataUrl, setAreaImageDataUrl] = useState<string | undefined>(undefined);
+  const [areaGrayscale, setAreaGrayscale] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const allowImageAreas = !NO_IMAGE_AREA_FORMATS.includes(format);
@@ -126,19 +131,21 @@ export default function Sidebar() {
           kind: "image",
           anchor: "background",
           imageDataUrl: areaImageDataUrl,
+          grayscale: areaGrayscale,
           ...DEFAULT_IMAGE_AREA_SIZE,
         });
       } else {
-        if (!areaShapeId) return;
         addArea({
           kind: "image",
           anchor: areaAnchor,
           shapeId: areaShapeId,
           imageDataUrl: areaImageDataUrl,
+          grayscale: areaGrayscale,
           ...DEFAULT_IMAGE_AREA_SIZE,
         });
       }
       setAreaImageDataUrl(undefined);
+      setAreaGrayscale(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
@@ -222,6 +229,7 @@ export default function Sidebar() {
           <RulerItem label="Format">
             <Dropdown
               label="Choose"
+              value={format}
               fields={["Social Post", "Poster", "Flyer", "Video", "Business Card", "Ticket", "Voucher", "Sticker", "Skateboard"]}
               onChange={setFormat}
             />
@@ -311,9 +319,6 @@ export default function Sidebar() {
               />
             ))}
           </div>
-          <div className="flex flex-col w-full items-center px-2 mt-2">
-            <Button size="sm" text="Shuffle" color="grey" onClick={regenerate} />
-          </div>
         </RulerSection>
 
         <SeparationLine/>
@@ -341,6 +346,7 @@ export default function Sidebar() {
             <Dropdown
               key={areaKind}
               label="Choose"
+              value={areaAnchor === "background" ? BACKGROUND_LABEL : ANCHOR_LABELS[areaAnchor]}
               fields={areaKind === "image" ? [...ANCHOR_OPTIONS, BACKGROUND_LABEL] : ANCHOR_OPTIONS}
               onChange={(label) => setAreaAnchor(labelToAnchor(label))}
             />
@@ -356,6 +362,7 @@ export default function Sidebar() {
                 <RulerItem label="Shape">
                   <Dropdown
                     label="Choose"
+                    value={shapes.find((s) => s.id === areaShapeId)?.label ?? NO_SHAPE_LABEL}
                     fields={SHAPE_OPTIONS}
                     onChange={(label) => setAreaShapeId(labelToShapeId(label))}
                   />
@@ -370,11 +377,31 @@ export default function Sidebar() {
                   onChange={handleAreaImageChange}
                 />
                 <Button
-                  text={areaImageDataUrl ? "Bild gewählt" : "Upload"}
+                  text={
+                    areaImageDataUrl && !GALLERY_IMAGES.some((img) => img.src === areaImageDataUrl)
+                      ? "Bild gewählt"
+                      : "Upload"
+                  }
                   color="grey"
                   onClick={() => fileInputRef.current?.click()}
                 />
+                <Button
+                  text="B&W"
+                  color={areaGrayscale ? "colored" : "grey"}
+                  onClick={() => setAreaGrayscale((prev) => !prev)}
+                />
               </RulerItem>
+              <div className="grid grid-cols-4 gap-2 px-2">
+                {GALLERY_IMAGES.map((img) => (
+                  <GalleryImageButton
+                    key={img.id}
+                    label={img.label}
+                    src={img.src}
+                    selected={areaImageDataUrl === img.src}
+                    onClick={() => setAreaImageDataUrl(img.src)}
+                  />
+                ))}
+              </div>
             </>
           )}
 
@@ -394,6 +421,19 @@ export default function Sidebar() {
                     {area.anchor === "background" ? BACKGROUND_LABEL : ANCHOR_LABELS[area.anchor]}
                     {area.kind === "text" ? `: ${area.text}` : ""}
                   </span>
+                  {area.kind === "image" && (
+                    <button
+                      type="button"
+                      onClick={() => toggleAreaGrayscale(area.id)}
+                      className={`shrink-0 text-[10px] uppercase px-1.5 py-0.5 rounded-sm ${
+                        area.grayscale
+                          ? "bg-primary-color text-white"
+                          : "bg-primary-darkgrey/20 text-primary-black hover:opacity-70"
+                      }`}
+                    >
+                      B&W
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => removeArea(area.id)}

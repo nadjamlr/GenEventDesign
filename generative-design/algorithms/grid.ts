@@ -279,9 +279,14 @@ export function drawGrid(p5: p5Types, params: Params) {
   }
 
   // Feste Areas (Text/Bild) bleiben von den generativen Shapes frei.
+  // Bild-Areas ohne Maskenform ("No Shape") werden quadratisch eingesetzt,
+  // statt sich an das (ggf. nicht-quadratische) Seitenverhältnis des Rahmens
+  // anzupassen.
   const resolvedAreas = overlayAreas.map((area) => {
-    const w = innerW * area.widthRatio;
-    const h = innerH * area.heightRatio;
+    const isUnmaskedImage = area.kind === "image" && !area.shapeId;
+    const squareSide = Math.min(innerW, innerH) * area.widthRatio;
+    const w = isUnmaskedImage ? squareSide : innerW * area.widthRatio;
+    const h = isUnmaskedImage ? squareSide : innerH * area.heightRatio;
     const { x, y } = getAnchorBox(area.anchor, innerX, innerY, innerW, innerH, w, h, padding);
     return { area, x, y, w, h };
   });

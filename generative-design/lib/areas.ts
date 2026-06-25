@@ -15,6 +15,7 @@ export type AreaDef = {
   text?: string; // bei kind === "text"
   shapeId?: string; // Maskenform bei kind === "image"
   imageDataUrl?: string; // hochgeladenes Bild bei kind === "image"
+  grayscale?: boolean; // Bild schwarz/weiß darstellen
 };
 
 export const DEFAULT_TEXT_AREA_SIZE = { widthRatio: 0.4, heightRatio: 0.2 };

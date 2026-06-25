@@ -42,6 +42,7 @@ type DesignStore = {
   regenerate: () => void;
   addArea: (area: Omit<AreaDef, "id">) => void;
   removeArea: (id: string) => void;
+  toggleAreaGrayscale: (id: string) => void;
 };
 
 const useDesignStore = create<DesignStore>((set) => ({
@@ -114,6 +115,12 @@ const useDesignStore = create<DesignStore>((set) => ({
     })),
   removeArea: (id) =>
     set((state) => ({ areas: state.areas.filter((a) => a.id !== id) })),
+  toggleAreaGrayscale: (id) =>
+    set((state) => ({
+      areas: state.areas.map((a) =>
+        a.id === id ? { ...a, grayscale: !a.grayscale } : a
+      ),
+    })),
 }));
 
 export default useDesignStore;
