@@ -12,7 +12,7 @@ import {
 import { exportRegistry } from "@/lib/canvasExport";
 import { shapes } from "@/lib/shapes";
 import type { AreaDef } from "@/lib/areas";
-import { hasSides, getSideLayout } from "@/lib/formats";
+import { hasSides, getSideLayout, type Side } from "@/lib/formats";
 import { getGoogleFontUrl } from "@/lib/fonts";
 import { TEXT_STYLES } from "@/lib/textStyles";
 
@@ -265,6 +265,11 @@ export default function Canvas() {
     // die gesamte Rechenzeit in gleichmäßige Export-Frames fließt.
     let exportingVideo = false;
 
+    // Animationsphase des zuletzt gezeichneten sichtbaren Frames – damit ein
+    // Screenshot exakt den gerade laufenden Stand einfriert (statt neu zu
+    // würfeln), liest exportRegistry.renderFrame diesen Wert mit aus.
+    let currentPhase: number | undefined;
+
     // Google Font (siehe lib/fonts.ts) wird pro benötigtem Weight einzeln
     // geladen (siehe lib/textStyles.ts für die verwendeten Weights). Cache ist
     // nach der vollen URL (statt nur nach Weight) geschlüsselt, damit ein
@@ -343,6 +348,7 @@ export default function Canvas() {
         const { animate, loopDuration } = paramsRef.current;
         const time =
           animate && loopDuration > 0 ? (p.millis() / 1000 / loopDuration) % 1 : undefined;
+        currentPhase = time;
 
         if (stacked) {
           if (!frontGfx || frontGfx.width !== sideW || frontGfx.height !== sideH) {
@@ -367,7 +373,11 @@ export default function Canvas() {
       };
     }, containerRef.current);
 
-    exportRegistry.render = (overrideSide) => {
+    // Rendert einen Stand in voller Export-Auflösung (unabhängig von der
+    // sichtbaren, skalierten Canvas-Größe). `time` undefined = statischer
+    // Stand (normaler Export), gesetzt = eingefrorene Animationsphase
+    // (Screenshot der laufenden Animation).
+    function renderSnapshot(overrideSide?: Side, time?: number) {
       const {
         columns,
         rows,
@@ -407,11 +417,15 @@ export default function Canvas() {
         inputValues,
         fontProvider: getFontProvider(instance),
         side: overrideSide ?? side,
+        time,
       });
       const dataUrl = (gfx.elt as HTMLCanvasElement).toDataURL("image/png");
       gfx.remove();
       return { dataUrl, width, height };
-    };
+    }
+
+    exportRegistry.render = (overrideSide) => renderSnapshot(overrideSide);
+    exportRegistry.renderFrame = (overrideSide) => renderSnapshot(overrideSide, currentPhase);
 
     // Nimmt eine nahtlose Animations-Schleife in voller Format-Auflösung als
     // WebM auf. Es wird in Echtzeit in ein Offscreen-Graphics gezeichnet und
@@ -512,6 +526,7 @@ export default function Canvas() {
     return () => {
       exportRegistry.render = null;
       exportRegistry.renderVideo = null;
+      exportRegistry.renderFrame = null;
       frontGfx?.remove();
       backGfx?.remove();
       instance.remove();

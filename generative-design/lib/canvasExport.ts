@@ -20,7 +20,11 @@ export type VideoExportOptions = {
 
 type RenderVideo = (options: VideoExportOptions) => Promise<Blob>;
 
+/** Rendert genau die Animationsphase, die im sichtbaren Canvas gerade läuft, in voller Export-Auflösung – ein "Screenshot" der laufenden Animation. */
+type RenderFrame = (overrideSide?: Side) => ExportSnapshot;
+
 export const exportRegistry: {
   render: RenderExport | null;
   renderVideo: RenderVideo | null;
-} = { render: null, renderVideo: null };
+  renderFrame: RenderFrame | null;
+} = { render: null, renderVideo: null, renderFrame: null };

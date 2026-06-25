@@ -131,6 +131,15 @@ export default function Sidebar() {
     setHexInput("");
   }
 
+  async function handleSnapshot() {
+    if (!exportRegistry.renderFrame) return;
+    const { dataUrl } = exportRegistry.renderFrame();
+    const blob = await (await fetch(dataUrl)).blob();
+    const filename = exportName.trim() || "snapshot";
+    const suffix = hasSides(format) ? `_${side}` : "";
+    saveAs(blob, `${filename}${suffix}_${Date.now()}.png`);
+  }
+
   async function handleExport() {
     const filename = exportName.trim() || "export";
 
@@ -475,6 +484,15 @@ export default function Sidebar() {
               onChange={(v) => setLoopDuration(Math.max(1, Number(v) || 0))}
             />
           </RulerItem>
+          <div className="flex flex-col w-full items-center px-2 mt-2">
+            <Button
+              size="sm"
+              text="Snapshot"
+              color="grey"
+              onClick={handleSnapshot}
+              disabled={!animate}
+            />
+          </div>
         </RulerSection>
 
         <SeparationLine/>
