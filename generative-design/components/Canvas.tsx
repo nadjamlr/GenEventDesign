@@ -228,6 +228,8 @@ export default function Canvas() {
     const loadingAreaPhotos = new Set<string>();
     // Fertige, durch die Shape maskierte Komposite, gecacht pro "areaId|w|h".
     const areaMaskedCache = new Map<string, p5.Image>();
+    // Hintergrund-Komposite (Foto "cover"-skaliert, ohne Maske), pro "areaId|w|h".
+    const areaBgCache = new Map<string, p5.Image>();
 
     function ensureAreaPhotosLoaded(areaList: AreaDef[]) {
       for (const area of areaList) {
@@ -277,6 +279,35 @@ export default function Canvas() {
       ctx.drawImage(mask, (rw - mw) / 2, (rh - mh) / 2, mw, mh);
 
       areaMaskedCache.set(key, pImg);
+      return pImg;
+    }
+
+    // Foto "cover"-skaliert in eine w×h-Fläche (ohne Maske) – für Hintergrund-
+    // Areas, die den kompletten Rahmen füllen.
+    function getBackgroundCoverImage(
+      p: p5,
+      area: AreaDef,
+      w: number,
+      h: number
+    ): p5.Image | undefined {
+      const photo = areaPhotoImages.get(area.id);
+      if (!photo) return undefined;
+
+      const rw = Math.round(w);
+      const rh = Math.round(h);
+      const key = `${area.id}|${rw}|${rh}`;
+      const cached = areaBgCache.get(key);
+      if (cached) return cached;
+
+      const pImg = p.createImage(rw, rh);
+      const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D })
+        .drawingContext;
+      const scale = Math.max(rw / photo.naturalWidth, rh / photo.naturalHeight);
+      const pw = photo.naturalWidth * scale;
+      const ph = photo.naturalHeight * scale;
+      ctx.drawImage(photo, (rw - pw) / 2, (rh - ph) / 2, pw, ph);
+
+      areaBgCache.set(key, pImg);
       return pImg;
     }
 
@@ -333,6 +364,7 @@ export default function Canvas() {
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(p, area, w, h),
+        getBackgroundImage: (area, w, h) => getBackgroundCoverImage(p, area, w, h),
       };
 
       p.setup = () => {
@@ -425,6 +457,7 @@ export default function Canvas() {
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
+        getBackgroundImage: (area, w, h) => getBackgroundCoverImage(instance, area, w, h),
       };
       drawGrid(gfx, {
         columns,
@@ -466,6 +499,7 @@ export default function Canvas() {
       };
       const areaImagesLocal: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
+        getBackgroundImage: (area, w, h) => getBackgroundCoverImage(instance, area, w, h),
       };
       const fontProvider = getFontProvider(instance);
 

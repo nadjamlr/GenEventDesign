@@ -26,6 +26,8 @@ export type LogoImages = {
 
 export type AreaImageProvider = {
   getImage: (area: AreaDef, w: number, h: number) => p5Types.Image | undefined;
+  /** Bild "cover"-skaliert auf w×h, ohne Shape-Maske – für Hintergrund-Areas. */
+  getBackgroundImage: (area: AreaDef, w: number, h: number) => p5Types.Image | undefined;
 };
 
 type Params = {
@@ -258,8 +260,26 @@ export function drawGrid(p5: p5Types, params: Params) {
   const innerH = p5.height;
   const padding = innerW * PADDING_RATIO;
 
+  // Hintergrund-Bild-Area (anchor === "background"): füllt den kompletten
+  // Rahmen und wird vor den Shapes gezeichnet. Die letzte gewinnt, falls
+  // mehrere existieren. Alle übrigen Areas werden normal platziert.
+  const backgroundArea = areas
+    .filter((a) => a.kind === "image" && a.anchor === "background")
+    .pop();
+  const overlayAreas = areas.filter(
+    (a): a is AreaDef & { anchor: Exclude<AreaDef["anchor"], "background"> } => a.anchor !== "background"
+  );
+
+  if (backgroundArea && areaImages) {
+    const bgImg = areaImages.getBackgroundImage(backgroundArea, innerW, innerH);
+    if (bgImg) {
+      p5.imageMode(p5.CORNER);
+      p5.image(bgImg, innerX, innerY, innerW, innerH);
+    }
+  }
+
   // Feste Areas (Text/Bild) bleiben von den generativen Shapes frei.
-  const resolvedAreas = areas.map((area) => {
+  const resolvedAreas = overlayAreas.map((area) => {
     const w = innerW * area.widthRatio;
     const h = innerH * area.heightRatio;
     const { x, y } = getAnchorBox(area.anchor, innerX, innerY, innerW, innerH, w, h, padding);

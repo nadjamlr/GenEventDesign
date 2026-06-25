@@ -2,10 +2,14 @@ import type { LogoAnchor } from "@/lib/logoPlacement";
 
 export type AreaKind = "text" | "image";
 
+// Anker einer Area: entweder eine feste Position (wie beim Logo) oder
+// "background" – dann füllt das Bild den kompletten Rahmen als Hintergrund.
+export type AreaAnchor = LogoAnchor | "background";
+
 export type AreaDef = {
   id: string;
   kind: AreaKind;
-  anchor: LogoAnchor;
+  anchor: AreaAnchor;
   widthRatio: number; // relativ zur Rahmenbreite (0..1)
   heightRatio: number; // relativ zur Rahmenhöhe (0..1)
   text?: string; // bei kind === "text"

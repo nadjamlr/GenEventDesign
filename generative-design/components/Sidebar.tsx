@@ -22,6 +22,7 @@ import { hasSides, type Side } from "@/lib/formats"
 import type { LogoMode } from "@/algorithms/grid"
 import {
   type AreaKind,
+  type AreaAnchor,
   DEFAULT_IMAGE_AREA_SIZE,
   DEFAULT_TEXT_AREA_SIZE,
 } from "@/lib/areas"
@@ -34,8 +35,10 @@ const LOGO_MODES: LogoMode[] = ["random", "logo", "icon"];
 const LOGO_MODE_LABELS: Record<LogoMode, string> = { random: "Random", logo: "Logo", icon: "Icon" };
 const ANCHOR_OPTIONS = ALL_ANCHORS.map((a) => ANCHOR_LABELS[a]);
 const SHAPE_OPTIONS = shapes.map((s) => s.label);
+const BACKGROUND_LABEL = "Hintergrund";
 
-function labelToAnchor(label: string): LogoAnchor {
+function labelToAnchor(label: string): AreaAnchor {
+  if (label === BACKGROUND_LABEL) return "background";
   return ALL_ANCHORS.find((a) => ANCHOR_LABELS[a] === label) ?? "center";
 }
 
@@ -84,7 +87,7 @@ export default function Sidebar() {
   const [exporting, setExporting] = useState(false);
 
   const [areaKind, setAreaKind] = useState<AreaKind>("text");
-  const [areaAnchor, setAreaAnchor] = useState<LogoAnchor>("center");
+  const [areaAnchor, setAreaAnchor] = useState<AreaAnchor>("center");
   const [areaShapeId, setAreaShapeId] = useState<string | undefined>(shapes[0]?.id);
   const [areaText, setAreaText] = useState("");
   const [areaImageDataUrl, setAreaImageDataUrl] = useState<string | undefined>(undefined);
@@ -96,6 +99,11 @@ export default function Sidebar() {
   useEffect(() => {
     if (!allowImageAreas && areaKind === "image") setAreaKind("text");
   }, [allowImageAreas, areaKind]);
+
+  // "Hintergrund" gibt es nur für Bild-Areas; bei Text zurück auf eine Position.
+  useEffect(() => {
+    if (areaKind === "text" && areaAnchor === "background") setAreaAnchor("center");
+  }, [areaKind, areaAnchor]);
 
   function handleAreaImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -111,14 +119,25 @@ export default function Sidebar() {
       addArea({ kind: "text", anchor: areaAnchor, text: areaText, ...DEFAULT_TEXT_AREA_SIZE });
       setAreaText("");
     } else {
-      if (!areaShapeId || !areaImageDataUrl) return;
-      addArea({
-        kind: "image",
-        anchor: areaAnchor,
-        shapeId: areaShapeId,
-        imageDataUrl: areaImageDataUrl,
-        ...DEFAULT_IMAGE_AREA_SIZE,
-      });
+      if (!areaImageDataUrl) return;
+      if (areaAnchor === "background") {
+        // Hintergrund-Bild: keine Maske/Shape nötig, füllt den ganzen Rahmen.
+        addArea({
+          kind: "image",
+          anchor: "background",
+          imageDataUrl: areaImageDataUrl,
+          ...DEFAULT_IMAGE_AREA_SIZE,
+        });
+      } else {
+        if (!areaShapeId) return;
+        addArea({
+          kind: "image",
+          anchor: areaAnchor,
+          shapeId: areaShapeId,
+          imageDataUrl: areaImageDataUrl,
+          ...DEFAULT_IMAGE_AREA_SIZE,
+        });
+      }
       setAreaImageDataUrl(undefined);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
@@ -320,8 +339,9 @@ export default function Sidebar() {
           </RulerItem>
           <RulerItem label="Position">
             <Dropdown
+              key={areaKind}
               label="Choose"
-              fields={ANCHOR_OPTIONS}
+              fields={areaKind === "image" ? [...ANCHOR_OPTIONS, BACKGROUND_LABEL] : ANCHOR_OPTIONS}
               onChange={(label) => setAreaAnchor(labelToAnchor(label))}
             />
           </RulerItem>
@@ -332,13 +352,15 @@ export default function Sidebar() {
             </RulerItem>
           ) : (
             <>
-              <RulerItem label="Shape">
-                <Dropdown
-                  label="Choose"
-                  fields={SHAPE_OPTIONS}
-                  onChange={(label) => setAreaShapeId(labelToShapeId(label))}
-                />
-              </RulerItem>
+              {areaAnchor !== "background" && (
+                <RulerItem label="Shape">
+                  <Dropdown
+                    label="Choose"
+                    fields={SHAPE_OPTIONS}
+                    onChange={(label) => setAreaShapeId(labelToShapeId(label))}
+                  />
+                </RulerItem>
+              )}
               <RulerItem label="Bild">
                 <input
                   ref={fileInputRef}
@@ -368,7 +390,8 @@ export default function Sidebar() {
                   className="flex items-center justify-between gap-2 bg-primary-lightgrey rounded-sm px-3 py-1.5 text-xs text-primary-darkgrey"
                 >
                   <span className="truncate">
-                    {area.kind === "text" ? "Text" : "Bild"} · {ANCHOR_LABELS[area.anchor]}
+                    {area.kind === "text" ? "Text" : "Bild"} ·{" "}
+                    {area.anchor === "background" ? BACKGROUND_LABEL : ANCHOR_LABELS[area.anchor]}
                     {area.kind === "text" ? `: ${area.text}` : ""}
                   </span>
                   <button
