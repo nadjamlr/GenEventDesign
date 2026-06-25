@@ -19,7 +19,7 @@ import { TEXT_STYLES } from "@/lib/textStyles";
 
 const STACK_GAP_RATIO = 0.04; // Abstand zwischen Vorder- und Rückseite, relativ zur Seitenhöhe
 const AREA_DRAG_MARGIN_RATIO = 0.02; // Mindestabstand zum Rahmenrand beim Drag&Drop von Areas
-const SHAPE_GRAIN_OPACITY = 0.1; // Stärke des Korns in den Shapes – bewusst dezent
+const SHAPE_GRAIN_OPACITY = 0.28; // Stärke des Korns in den Shapes
 
 // Feines Schwarz/Weiß-Korn, das per "source-atop" nur auf bereits gefüllte
 // (deckende) Pixel zeichnet – bleibt also exakt auf die Shape-Silhouette
