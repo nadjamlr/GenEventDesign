@@ -59,6 +59,8 @@ const LOGO_WIDTH_RATIO = 0.28; // Logo-Breite relativ zur Rahmenbreite
 const PADDING_RATIO = 0.06; // Abstand zum Rahmenrand relativ zur Rahmenbreite
 const POSITIONED_FIELD_WIDTH_RATIO = 0.35; // Breite eines einzeln positionierten Feldes
 const POSITIONED_FIELD_HEIGHT_RATIO = 0.08; // Höhe eines einzeln positionierten Feldes
+const MIN_GAP_RATIO = 0.8; // Mindestabstand zwischen Mittelpunkten, relativ zur Summe der halben Größen – kleiner erlaubt mehr Überlappung (Tiefe), größer verhindert sie stärker
+const MAX_PLACEMENT_ATTEMPTS = 24; // Versuche pro Element, eine Position mit genug Abstand zu Nachbarn zu finden
 
 // Bewegungs-Amplituden für die Animation, relativ zur Elementgröße (baseUnit)
 // bzw. als absolute Faktoren. Bewusst dezent, damit die Komposition ruhig wirkt.
@@ -136,6 +138,13 @@ function rectsOverlap(
   bh: number
 ): boolean {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+// Schlüssel für ein räumliches Hash-Grid, mit dem sich überlappende Nachbarn
+// bei der Shape-Platzierung ohne O(n²)-Vergleich gegen alle bisher
+// platzierten Elemente finden lassen.
+function cellKey(ix: number, iy: number): string {
+  return `${ix},${iy}`;
 }
 
 type Instance = {
@@ -343,39 +352,86 @@ export function drawGrid(p5: p5Types, params: Params) {
   const bleedX = innerW * BLEED_RATIO;
   const bleedY = innerH * BLEED_RATIO;
 
-  const instances: Instance[] = [];
-  for (let i = 0; i < count; i++) {
+  // Größe jedes Elements vorab bestimmen, damit die Platzierung anschließend
+  // größte Elemente zuerst versuchen kann – sie bekommen die erste Wahl an
+  // freiem Platz, kleinere füllen danach die Lücken. So verteilt sich die
+  // Streuung gleichmäßiger, als wenn ein großes Element zufällig erst spät
+  // (und dann oft gar nicht mehr) einen Platz fände.
+  const candidates = Array.from({ length: count }, (_, i) => {
     // rng()**2 bevorzugt kleinere Elemente, mit gelegentlichen großen
     // Ausreißern – organischer als eine Gleichverteilung.
     const scale = 0.5 + rng() ** 2 * 2.5;
-    const cx = innerX - bleedX + rng() * (innerW + bleedX * 2);
-    const cy = innerY - bleedY + rng() * (innerH + bleedY * 2);
-    const size = baseUnit * scale;
+    return { idx: i, size: baseUnit * scale };
+  }).sort((a, b) => b.size - a.size);
 
-    const intersectsArea = exclusionRects.some(({ x, y, w, h }) =>
-      rectsOverlap(cx - size / 2, cy - size / 2, size, size, x, y, w, h)
-    );
-    if (intersectsArea) continue;
+  // Räumliches Hash-Grid für die Nachbarsuche: Zellgröße deckt die
+  // größtmögliche Paarung ab, damit ein 3x3-Block um die Kandidaten-Zelle
+  // garantiert alle relevanten Nachbarn enthält.
+  const cellSize = Math.max(1, candidates[0]?.size ?? baseUnit);
+  const grid = new Map<string, Instance[]>();
 
-    instances.push({
-      idx: i,
-      cx,
-      cy,
-      size,
-      shapeId:
-        availableShapes.length > 0
-          ? availableShapes[Math.floor(rng() * availableShapes.length)]
-          : undefined,
-      colorHex:
-        selectedColors.length > 0
-          ? selectedColors[Math.floor(rng() * selectedColors.length)]
-          : FALLBACK_COLOR,
-    });
+  function neighborsTooClose(cx: number, cy: number, size: number): boolean {
+    const ix = Math.floor(cx / cellSize);
+    const iy = Math.floor(cy / cellSize);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const bucket = grid.get(cellKey(ix + dx, iy + dy));
+        if (!bucket) continue;
+        for (const other of bucket) {
+          const minDist = ((size + other.size) / 2) * MIN_GAP_RATIO;
+          const ddx = cx - other.cx;
+          const ddy = cy - other.cy;
+          if (ddx * ddx + ddy * ddy < minDist * minDist) return true;
+        }
+      }
+    }
+    return false;
   }
 
-  // Größte Elemente zuerst (liegen unten), kleinere obenauf – sorgt für
-  // Tiefe in den Überlappungen statt zufälligem Gewusel.
-  instances.sort((a, b) => b.size - a.size);
+  // Pro Element mehrere Kandidaten-Positionen ausprobieren und nur eine
+  // annehmen, die zu bereits platzierten Elementen genug Abstand hält. Etwas
+  // Überlappung bleibt erlaubt (siehe MIN_GAP_RATIO) für die gewollte
+  // Tiefenwirkung beim Stapeln; findet sich nach den Versuchen keine Position,
+  // entfällt das Element (wie zuvor bei Überlappung mit festen Areas).
+  const instances: Instance[] = [];
+  for (const { idx, size } of candidates) {
+    for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
+      const cx = innerX - bleedX + rng() * (innerW + bleedX * 2);
+      const cy = innerY - bleedY + rng() * (innerH + bleedY * 2);
+
+      const intersectsArea = exclusionRects.some(({ x, y, w, h }) =>
+        rectsOverlap(cx - size / 2, cy - size / 2, size, size, x, y, w, h)
+      );
+      if (intersectsArea) continue;
+      if (neighborsTooClose(cx, cy, size)) continue;
+
+      const inst: Instance = {
+        idx,
+        cx,
+        cy,
+        size,
+        shapeId:
+          availableShapes.length > 0
+            ? availableShapes[Math.floor(rng() * availableShapes.length)]
+            : undefined,
+        colorHex:
+          selectedColors.length > 0
+            ? selectedColors[Math.floor(rng() * selectedColors.length)]
+            : FALLBACK_COLOR,
+      };
+      instances.push(inst);
+      const key = cellKey(Math.floor(cx / cellSize), Math.floor(cy / cellSize));
+      const bucket = grid.get(key);
+      if (bucket) bucket.push(inst);
+      else grid.set(key, [inst]);
+      break;
+    }
+  }
+
+  // `candidates` ist bereits absteigend nach Größe sortiert, `instances`
+  // erbt diese Reihenfolge: größere Elemente liegen unten, kleinere obenauf –
+  // das sorgt für Tiefe in den verbliebenen Überlappungen statt zufälligem
+  // Gewusel.
 
   for (const inst of instances) {
     let { cx, cy, size } = inst;
