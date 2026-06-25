@@ -285,7 +285,14 @@ export function drawGrid(p5: p5Types, params: Params) {
     // Buchstabenabstand in px statt em setzen, damit er unabhängig davon korrekt
     // ist, ob die Canvas-Engine ihn vor oder nach dem folgenden textSize()-Aufruf
     // auswertet (em wäre relativ zur jeweils *aktuellen* Schriftgröße).
-    p5.textProperty("letterSpacing", `${(style.letterSpacing ?? 0) * finalSize}px`);
+    // Auf 3 Nachkommastellen runden und nicht-endliche Werte überspringen:
+    // Chrome normalisiert letterSpacing auf diese Präzision; ein unrunder Wert
+    // (Float-Rest oder NaN) weicht beim Zurücklesen minimal ab, worauf p5
+    // fälschlich "Unable to set 'letterSpacing' ... not supported" meldet.
+    const letterSpacingPx = (style.letterSpacing ?? 0) * finalSize;
+    if (Number.isFinite(letterSpacingPx)) {
+      p5.textProperty("letterSpacing", `${Math.round(letterSpacingPx * 1000) / 1000}px`);
+    }
     return finalSize;
   }
 
