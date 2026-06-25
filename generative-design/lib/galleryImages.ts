@@ -12,4 +12,5 @@ export const GALLERY_IMAGES: GalleryImage[] = [
   { id: "rassvet_clrd", label: "Rassvet", src: "/image/rassvet_clrd.jpg" },
   { id: "rassvet_clrd_ollie", label: "Rassvet Ollie", src: "/image/rassvet_clrd_ollie.jpg" },
   { id: "rassvet_stairs_clrd", label: "Rassvet Stairs", src: "/image/rassvet_stairs_clrd.jpg" },
+  { id: "dsc06019", label: "Skater", src: "/image/DSC06019.jpg" },
 ];
