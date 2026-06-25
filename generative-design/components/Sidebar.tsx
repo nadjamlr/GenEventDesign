@@ -235,7 +235,7 @@ export default function Sidebar() {
             <Dropdown
               label="Choose"
               value={format}
-              fields={["Social Post", "Poster", "Flyer", "Video", "Business Card", "Ticket", "Voucher", "Sticker", "Skateboard"]}
+              fields={["Social Post", "Poster", "Flyer", "Video", "Business Card", "Ticket", "Voucher", "Sticker", "Skateboard", "T-Shirt"]}
               onChange={setFormat}
             />
           </RulerItem>

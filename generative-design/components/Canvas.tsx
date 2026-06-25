@@ -13,7 +13,7 @@ import {
 import { exportRegistry } from "@/lib/canvasExport";
 import { shapes } from "@/lib/shapes";
 import type { AreaDef } from "@/lib/areas";
-import { hasSides, getSideLayout, type Side } from "@/lib/formats";
+import { hasSides, getSideLayout, FORMAT_SIZES, type Side } from "@/lib/formats";
 import { getGoogleFontUrl } from "@/lib/fonts";
 import { TEXT_STYLES } from "@/lib/textStyles";
 
@@ -444,6 +444,74 @@ export default function Canvas() {
     // würfeln), liest exportRegistry.renderFrame diesen Wert mit aus.
     let currentPhase: number | undefined;
 
+    // Mockup-Formate (z.B. T-Shirt): Produktfoto füllt die Canvas, die
+    // generative Komposition wird in die Design-Zone (Brust) gerechnet.
+    const mockupImages = new Map<string, p5.Image>();
+    const loadingMockups = new Set<string>();
+    let designGfx: p5.Graphics | undefined; // gecachtes Design-Graphics fürs Live-Rendering
+
+    function ensureMockupLoaded(p: p5, src: string) {
+      if (mockupImages.has(src) || loadingMockups.has(src)) return;
+      loadingMockups.add(src);
+      const htmlImg = new window.Image();
+      htmlImg.onload = () => {
+        const pImg = p.createImage(htmlImg.naturalWidth, htmlImg.naturalHeight);
+        (pImg as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext.drawImage(
+          htmlImg,
+          0,
+          0
+        );
+        mockupImages.set(src, pImg);
+        loadingMockups.delete(src);
+      };
+      htmlImg.onerror = () => loadingMockups.delete(src);
+      htmlImg.src = src;
+    }
+
+    // Zeichnet die Komposition auf `target`. Mockup-Formate: Produktfoto
+    // bildschirmfüllend + Design in die Design-Zone. Sonst normales drawGrid.
+    // `cached` nutzt im Live-Betrieb ein wiederverwendetes Design-Graphics
+    // (statt es pro Frame neu zu allokieren); Exporte erzeugen ein Einweg-Graphics.
+    function drawComposition(
+      p5i: p5,
+      target: p5,
+      w: number,
+      h: number,
+      drawParams: Parameters<typeof drawGrid>[1],
+      cached: boolean
+    ) {
+      const fmt = FORMAT_SIZES[(drawParams.format as string) ?? ""];
+      if (!fmt?.mockupSrc) {
+        drawGrid(target, drawParams);
+        return;
+      }
+      const region = fmt.designRegion ?? { x: 0.3, y: 0.25, w: 0.4, h: 0.4 };
+      const rw = Math.max(1, Math.round(w * region.w));
+      const rh = Math.max(1, Math.round(h * region.h));
+
+      let dg: p5.Graphics;
+      if (cached) {
+        if (!designGfx || designGfx.width !== rw || designGfx.height !== rh) {
+          designGfx?.remove();
+          designGfx = p5i.createGraphics(rw, rh);
+        }
+        dg = designGfx;
+      } else {
+        dg = p5i.createGraphics(rw, rh);
+      }
+
+      drawGrid(dg, drawParams);
+
+      ensureMockupLoaded(p5i, fmt.mockupSrc);
+      const shirt = mockupImages.get(fmt.mockupSrc);
+      target.imageMode(target.CORNER);
+      if (shirt) target.image(shirt, 0, 0, w, h);
+      else target.background(255);
+      target.image(dg, Math.round(w * region.x), Math.round(h * region.y), rw, rh);
+
+      if (!cached) dg.remove();
+    }
+
     // Google Font (siehe lib/fonts.ts) wird pro benötigtem Weight einzeln
     // geladen (siehe lib/textStyles.ts für die verwendeten Weights). Cache ist
     // nach der vollen URL (statt nur nach Weight) geschlüsselt, damit ein
@@ -548,7 +616,14 @@ export default function Canvas() {
             p.image(backGfx!, 0, sideH + gap, sideW, sideH);
           }
         } else {
-          drawGrid(p, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, time });
+          drawComposition(
+            p,
+            p,
+            w,
+            h,
+            { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, time },
+            true
+          );
         }
       };
     }, containerRef.current);
@@ -582,24 +657,31 @@ export default function Canvas() {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
         getBackgroundImage: (area, w, h) => getBackgroundCoverImage(instance, area, w, h),
       };
-      drawGrid(gfx, {
-        columns,
-        rows,
-        selectedShapes,
-        selectedColors,
-        shapeImages,
-        seed,
-        format,
-        logoImages,
-        logoEnabled,
-        logoMode,
-        areas,
-        areaImages,
-        inputValues,
-        fontProvider: getFontProvider(instance),
-        side: overrideSide ?? side,
-        time,
-      });
+      drawComposition(
+        instance,
+        gfx,
+        width,
+        height,
+        {
+          columns,
+          rows,
+          selectedShapes,
+          selectedColors,
+          shapeImages,
+          seed,
+          format,
+          logoImages,
+          logoEnabled,
+          logoMode,
+          areas,
+          areaImages,
+          inputValues,
+          fontProvider: getFontProvider(instance),
+          side: overrideSide ?? side,
+          time,
+        },
+        false
+      );
       const dataUrl = (gfx.elt as HTMLCanvasElement).toDataURL("image/png");
       gfx.remove();
       return { dataUrl, width, height };
@@ -634,15 +716,22 @@ export default function Canvas() {
       ensureAreaPhotosLoaded(params.areas);
 
       const drawFrame = (phase: number) => {
-        drawGrid(gfx, {
-          ...params,
-          shapeImages,
-          logoImages,
-          areaImages: areaImagesLocal,
-          fontProvider,
-          side: overrideSide ?? params.side,
-          time: phase,
-        });
+        drawComposition(
+          instance,
+          gfx,
+          width,
+          height,
+          {
+            ...params,
+            shapeImages,
+            logoImages,
+            areaImages: areaImagesLocal,
+            fontProvider,
+            side: overrideSide ?? params.side,
+            time: phase,
+          },
+          false
+        );
       };
 
       const totalFrames = Math.max(1, Math.round(duration * fps));
@@ -714,6 +803,7 @@ export default function Canvas() {
       window.removeEventListener("mouseup", handleMouseUp);
       frontGfx?.remove();
       backGfx?.remove();
+      designGfx?.remove();
       instance.remove();
     };
   }, []);

@@ -10,6 +10,10 @@ export type FormatSize = {
   hasSides?: boolean;
   /** Anordnung von Vorder-/Rückseite in der Vorschau. Default "column". */
   sideLayout?: "row" | "column";
+  /** Produkt-Mockup-Foto (füllt die Canvas); das Design wird in designRegion gerechnet. */
+  mockupSrc?: string;
+  /** Design-Zone auf dem Mockup (z.B. Brust), als Anteil (0..1) der Canvas. */
+  designRegion?: { x: number; y: number; w: number; h: number };
 };
 
 export const FORMAT_SIZES: Record<string, FormatSize> = {
@@ -23,6 +27,14 @@ export const FORMAT_SIZES: Record<string, FormatSize> = {
   Voucher: { width: 1000, height: 500, defaultExportType: "pdf", hasSides: true },
   Sticker: { width: 800, height: 800, defaultExportType: "png" },
   Skateboard: { width: 250, height: 1000, cornerRadius: 110, defaultExportType: "pdf" },
+  // Foto-Mockup eines weißen T-Shirts; das Design sitzt auf der Brust.
+  "T-Shirt": {
+    width: 1200,
+    height: 1500,
+    defaultExportType: "png",
+    mockupSrc: "/image/Freestyler_White_Packshot_Front_Main_0_44747_1200x1500_1280x1280.jpg",
+    designRegion: { x: 0.34, y: 0.26, w: 0.1, h: 0.1 },
+  },
 };
 
 export const DEFAULT_FORMAT = "Social Post";
