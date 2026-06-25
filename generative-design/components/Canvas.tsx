@@ -18,6 +18,17 @@ import { TEXT_STYLES } from "@/lib/textStyles";
 
 const STACK_GAP_RATIO = 0.04; // Abstand zwischen Vorder- und Rückseite, relativ zur Seitenhöhe
 
+// Bestmöglicher unterstützter WebM-Codec für die Video-Aufnahme.
+function pickVideoMime(): string {
+  const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  if (typeof MediaRecorder !== "undefined") {
+    for (const c of candidates) {
+      if (MediaRecorder.isTypeSupported(c)) return c;
+    }
+  }
+  return "video/webm";
+}
+
 export default function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const {
@@ -35,6 +46,8 @@ export default function Canvas() {
     side,
     logoEnabled,
     logoMode,
+    animate,
+    loopDuration,
   } = useDesignStore();
 
   // ref hält immer die aktuellen Werte, ohne p5 neu erstellen zu müssen
@@ -53,6 +66,8 @@ export default function Canvas() {
     side,
     logoEnabled,
     logoMode,
+    animate,
+    loopDuration,
   });
   paramsRef.current = {
     columns,
@@ -69,6 +84,8 @@ export default function Canvas() {
     side,
     logoEnabled,
     logoMode,
+    animate,
+    loopDuration,
   };
 
   useEffect(() => {
@@ -128,21 +145,37 @@ export default function Canvas() {
     // (states.tint is a Color object, but the renderer treats it like a
     // plain [r,g,b,a] array internally and throws). Baking the color into
     // the bitmap ourselves via canvas compositing avoids that path entirely.
-    function getTintedImage(p: p5, id: string, colorHex: string): p5.Image | undefined {
+    function getTintedImage(
+      p: p5,
+      id: string,
+      colorHex: string,
+      targetSize = 512
+    ): p5.Image | undefined {
       const raw = rawImages.get(id);
       if (!raw) return undefined;
 
-      const key = `${id}|${colorHex}`;
+      // Auflösung auf die nächste 2er-Potenz der Anzeigegröße runden (256..2048):
+      // große Shapes werden scharf gerastert, kleine kosten keinen unnötigen
+      // Speicher, und es entstehen nur wenige gecachte Stufen.
+      const bucket = Math.min(2048, Math.max(256, 2 ** Math.ceil(Math.log2(Math.max(1, targetSize)))));
+      const longSide = Math.max(raw.naturalWidth, raw.naturalHeight) || 1;
+      const scale = bucket / longSide;
+      const w = Math.max(1, Math.round(raw.naturalWidth * scale));
+      const h = Math.max(1, Math.round(raw.naturalHeight * scale));
+
+      const key = `${id}|${colorHex}|${bucket}`;
       const cached = tintedCache.get(key);
       if (cached) return cached;
 
-      const pImg = p.createImage(raw.naturalWidth, raw.naturalHeight);
+      // SVG wird beim drawImage in der Zielgröße neu (vektorbasiert) gerastert
+      // – dadurch bleibt es bei jeder Größe scharf.
+      const pImg = p.createImage(w, h);
       const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D })
         .drawingContext;
-      ctx.drawImage(raw, 0, 0);
+      ctx.drawImage(raw, 0, 0, w, h);
       ctx.globalCompositeOperation = "source-in";
       ctx.fillStyle = colorHex;
-      ctx.fillRect(0, 0, pImg.width, pImg.height);
+      ctx.fillRect(0, 0, w, h);
 
       tintedCache.set(key, pImg);
       return pImg;
@@ -228,6 +261,10 @@ export default function Canvas() {
     let frontGfx: p5.Graphics | undefined;
     let backGfx: p5.Graphics | undefined;
 
+    // Während der Video-Aufnahme pausiert die sichtbare Render-Schleife, damit
+    // die gesamte Rechenzeit in gleichmäßige Export-Frames fließt.
+    let exportingVideo = false;
+
     // Google Font (siehe lib/fonts.ts) wird pro benötigtem Weight einzeln
     // geladen (siehe lib/textStyles.ts für die verwendeten Weights). Cache ist
     // nach der vollen URL (statt nur nach Weight) geschlüsselt, damit ein
@@ -262,7 +299,7 @@ export default function Canvas() {
 
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
-        getImage: (id, colorHex) => getTintedImage(p, id, colorHex),
+        getImage: (id, colorHex, targetSize) => getTintedImage(p, id, colorHex, targetSize),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(p, area, w, h),
@@ -288,6 +325,7 @@ export default function Canvas() {
         });
       };
       p.draw = () => {
+        if (exportingVideo) return; // sichtbare Schleife während des Exports anhalten
         const { w, h, sideW, sideH, gap, stacked, layout, cornerRadius } = fittedSize();
         if (p.width !== w || p.height !== h) {
           p.resizeCanvas(w, h);
@@ -300,6 +338,12 @@ export default function Canvas() {
         ensureAreaPhotosLoaded(paramsRef.current.areas);
         const fontProvider = getFontProvider(p);
 
+        // Animations-Phase aus der Echtzeit ableiten; bei ausgeschalteter
+        // Animation bleibt time undefined und drawGrid zeichnet statisch.
+        const { animate, loopDuration } = paramsRef.current;
+        const time =
+          animate && loopDuration > 0 ? (p.millis() / 1000 / loopDuration) % 1 : undefined;
+
         if (stacked) {
           if (!frontGfx || frontGfx.width !== sideW || frontGfx.height !== sideH) {
             frontGfx?.remove();
@@ -307,8 +351,8 @@ export default function Canvas() {
             frontGfx = p.createGraphics(sideW, sideH);
             backGfx = p.createGraphics(sideW, sideH);
           }
-          drawGrid(frontGfx!, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, side: "front" });
-          drawGrid(backGfx!, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, side: "back" });
+          drawGrid(frontGfx!, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, side: "front", time });
+          drawGrid(backGfx!, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, side: "back", time });
           p.clear();
           p.imageMode(p.CORNER);
           p.image(frontGfx!, 0, 0, sideW, sideH);
@@ -318,7 +362,7 @@ export default function Canvas() {
             p.image(backGfx!, 0, sideH + gap, sideW, sideH);
           }
         } else {
-          drawGrid(p, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider });
+          drawGrid(p, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, time });
         }
       };
     }, containerRef.current);
@@ -342,7 +386,7 @@ export default function Canvas() {
       const gfx = instance.createGraphics(width, height);
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
-        getImage: (id, colorHex) => getTintedImage(instance, id, colorHex),
+        getImage: (id, colorHex, targetSize) => getTintedImage(instance, id, colorHex, targetSize),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
@@ -369,8 +413,105 @@ export default function Canvas() {
       return { dataUrl, width, height };
     };
 
+    // Nimmt eine nahtlose Animations-Schleife in voller Format-Auflösung als
+    // WebM auf. Es wird in Echtzeit in ein Offscreen-Graphics gezeichnet und
+    // dessen Canvas-Stream via MediaRecorder mitgeschnitten (eine 4s-Schleife
+    // dauert also ~4s).
+    exportRegistry.renderVideo = ({ duration, fps = 30, side: overrideSide, onProgress }) => {
+      const params = paramsRef.current;
+      const { width, height } = params;
+      const gfx = instance.createGraphics(width, height);
+      const shapeImages: ShapeImageProvider = {
+        isReady: (id) => rawImages.has(id),
+        getImage: (id, colorHex, targetSize) => getTintedImage(instance, id, colorHex, targetSize),
+      };
+      const areaImagesLocal: AreaImageProvider = {
+        getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
+      };
+      const fontProvider = getFontProvider(instance);
+
+      // Assets, die ggf. noch laden, anstoßen, bevor aufgenommen wird.
+      const areaShapeIds = params.areas
+        .filter((a): a is AreaDef & { shapeId: string } => !!a.shapeId)
+        .map((a) => a.shapeId);
+      ensureRawLoaded([...params.selectedShapes, ...areaShapeIds]);
+      ensureAreaPhotosLoaded(params.areas);
+
+      const drawFrame = (phase: number) => {
+        drawGrid(gfx, {
+          ...params,
+          shapeImages,
+          logoImages,
+          areaImages: areaImagesLocal,
+          fontProvider,
+          side: overrideSide ?? params.side,
+          time: phase,
+        });
+      };
+
+      const totalFrames = Math.max(1, Math.round(duration * fps));
+      const frameMs = 1000 / fps;
+
+      // Sichtbare Schleife anhalten und den ersten Frame vorzeichnen.
+      exportingVideo = true;
+      drawFrame(0);
+
+      // Manuelles Frame-Capturing (captureStream(0) + requestFrame): jeder
+      // gezeichnete Frame wird gezielt – gleichmäßig getaktet – in den Stream
+      // geschoben, statt den Canvas in Echtzeit abzutasten. Das ergibt eine
+      // konstante Bildrate ohne Ruckeln/Doppelframes.
+      const stream = (gfx.elt as HTMLCanvasElement).captureStream(0);
+      const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
+      const mimeType = pickVideoMime();
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 16_000_000 });
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      return new Promise<Blob>((resolve) => {
+        // Genau einmal abschließen – egal ob normaler Stop oder Recorder-Fehler
+        // –, damit Graphics + sichtbare Schleife aufgeräumt werden und die UI
+        // nie hängen bleibt.
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          exportingVideo = false;
+          gfx.remove();
+          resolve(new Blob(chunks, { type: mimeType }));
+        };
+        recorder.onstop = finish;
+        recorder.onerror = finish;
+
+        recorder.start();
+        let f = 0;
+        const drawNext = () => {
+          if (settled) return;
+          drawFrame(f / totalFrames);
+          track.requestFrame?.();
+          f++;
+          onProgress?.(f / totalFrames);
+          if (f >= totalFrames) {
+            setTimeout(() => {
+              try {
+                recorder.requestData?.();
+                recorder.stop();
+              } catch {
+                finish();
+              }
+            }, frameMs);
+            return;
+          }
+          setTimeout(drawNext, frameMs);
+        };
+        setTimeout(drawNext, frameMs);
+      });
+    };
+
     return () => {
       exportRegistry.render = null;
+      exportRegistry.renderVideo = null;
       frontGfx?.remove();
       backGfx?.remove();
       instance.remove();

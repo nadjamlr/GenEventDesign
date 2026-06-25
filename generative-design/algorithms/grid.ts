@@ -7,7 +7,8 @@ import { getTextStyle } from "@/lib/textStyles";
 
 export type ShapeImageProvider = {
   isReady: (id: string) => boolean;
-  getImage: (id: string, colorHex: string) => p5Types.Image | undefined;
+  /** targetSize = gewünschte Anzeigegröße in px, damit große Shapes scharf gerastert werden. */
+  getImage: (id: string, colorHex: string, targetSize?: number) => p5Types.Image | undefined;
 };
 
 export type LogoVariantImages = {
@@ -44,6 +45,12 @@ type Params = {
   side?: Side;
   /** Liefert die geladene Inter-Variante für den gewünschten Font-Weight, falls vorhanden. */
   fontProvider?: (weight: number) => p5Types.Font | undefined;
+  /**
+   * Animations-Phase im Bereich [0,1). Bei phase 0/1 ist das Bild identisch zum
+   * statischen Stand (nahtlose Schleife). Ist `time` undefined, wird keine
+   * Bewegung berechnet – die Ausgabe bleibt exakt wie bisher.
+   */
+  time?: number;
 };
 
 const BLEED_RATIO = 0.18; // wie weit Elemente über den Rand hinausragen dürfen
@@ -52,6 +59,13 @@ const LOGO_WIDTH_RATIO = 0.28; // Logo-Breite relativ zur Rahmenbreite
 const PADDING_RATIO = 0.06; // Abstand zum Rahmenrand relativ zur Rahmenbreite
 const POSITIONED_FIELD_WIDTH_RATIO = 0.35; // Breite eines einzeln positionierten Feldes
 const POSITIONED_FIELD_HEIGHT_RATIO = 0.08; // Höhe eines einzeln positionierten Feldes
+
+// Bewegungs-Amplituden für die Animation, relativ zur Elementgröße (baseUnit)
+// bzw. als absolute Faktoren. Bewusst dezent, damit die Komposition ruhig wirkt.
+const MOTION_DRIFT = 0.5; // Positions-Drift relativ zu baseUnit
+const MOTION_PULSE = 0.45; // max. Größen-Pulsieren
+const MOTION_ROT = Math.PI / 3; // max. Rotations-Wackeln um die Basis-Rotation
+const TAU = Math.PI * 2;
 
 function hashString(str: string): number {
   let hash = 0;
@@ -72,6 +86,45 @@ function createRng(seed: number) {
   };
 }
 
+// Eigenes, seed-gekoppeltes Value-Noise (glatt, deterministisch). Bewusst
+// unabhängig von p5.noise, da das in dieser p5-Version (2.x) anders/instabil
+// ist (z.B. fehlt noiseSeed).
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
+
+function hash2(ix: number, iy: number, seed: number): number {
+  let h = (ix * 374761393 + iy * 668265263 + seed * 1013904223) | 0;
+  h = (Math.imul(h ^ (h >>> 13), 1274126177)) | 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296; // [0,1)
+}
+
+function valNoise(x: number, y: number, seed: number): number {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const xf = x - x0;
+  const yf = y - y0;
+  const v00 = hash2(x0, y0, seed);
+  const v10 = hash2(x0 + 1, y0, seed);
+  const v01 = hash2(x0, y0 + 1, seed);
+  const v11 = hash2(x0 + 1, y0 + 1, seed);
+  const u = smoothstep(xf);
+  const w = smoothstep(yf);
+  const a = v00 + (v10 - v00) * u;
+  const b = v01 + (v11 - v01) * u;
+  return a + (b - a) * w; // [0,1)
+}
+
+// Value-Noise-Wert, der über eine volle Loop-Phase (0..1) nahtlos zum
+// Startwert zurückkehrt (Sampling entlang eines Kreises) und bei phase 0/1
+// exakt 0 liefert – so bleibt das statische Bild bei time=0/undefined
+// unverändert und die Animation läuft endlos ohne sichtbaren Sprung.
+function loopDelta(seed: number, bx: number, by: number, phase: number, radius = 0.6): number {
+  const v = valNoise(bx + radius * Math.cos(TAU * phase), by + radius * Math.sin(TAU * phase), seed);
+  const v0 = valNoise(bx + radius, by, seed); // phase 0: cos=1, sin=0
+  return v - v0;
+}
+
 function rectsOverlap(
   ax: number,
   ay: number,
@@ -86,6 +139,7 @@ function rectsOverlap(
 }
 
 type Instance = {
+  idx: number;
   cx: number;
   cy: number;
   size: number;
@@ -140,7 +194,12 @@ export function drawGrid(p5: p5Types, params: Params) {
     inputValues = {},
     side,
     fontProvider,
+    time,
   } = params;
+
+  // Animation: phase in [0,1), bei time=undefined keine Bewegung.
+  const animate = time !== undefined;
+  const phase = animate ? (((time as number) % 1) + 1) % 1 : 0;
 
   const isTwoSided = hasSides(format);
   const activeSide: Side | undefined = isTwoSided ? side ?? "front" : undefined;
@@ -299,6 +358,7 @@ export function drawGrid(p5: p5Types, params: Params) {
     if (intersectsArea) continue;
 
     instances.push({
+      idx: i,
       cx,
       cy,
       size,
@@ -318,21 +378,37 @@ export function drawGrid(p5: p5Types, params: Params) {
   instances.sort((a, b) => b.size - a.size);
 
   for (const inst of instances) {
+    let { cx, cy, size } = inst;
+    let rot = angleStep;
+
+    // Pro Element eine eigene, über die Loop-Phase nahtlose Bewegung. Die
+    // stabile Generierungs-Id (inst.idx) sorgt dafür, dass jedes Element über
+    // die Frames hinweg konsistent driftet/pulsiert.
+    if (animate) {
+      const k = inst.idx * 1.7;
+      cx += loopDelta(seed, k, 11.3, phase) * baseUnit * MOTION_DRIFT;
+      cy += loopDelta(seed, k + 50, 23.7, phase) * baseUnit * MOTION_DRIFT;
+      size *= 1 + loopDelta(seed, k + 99, 7.1, phase) * MOTION_PULSE;
+      rot += loopDelta(seed, k + 200, 3.3, phase) * MOTION_ROT;
+    }
+
     const img =
-      inst.shapeId && shapeImages ? shapeImages.getImage(inst.shapeId, inst.colorHex) : undefined;
+      inst.shapeId && shapeImages
+        ? shapeImages.getImage(inst.shapeId, inst.colorHex, size)
+        : undefined;
 
     p5.push();
-    p5.translate(inst.cx, inst.cy);
-    p5.rotate(angleStep);
+    p5.translate(cx, cy);
+    p5.rotate(rot);
 
     if (img) {
-      const fit = Math.min(inst.size / img.width, inst.size / img.height);
+      const fit = Math.min(size / img.width, size / img.height);
       p5.imageMode(p5.CENTER);
       p5.image(img, 0, 0, img.width * fit, img.height * fit);
     } else {
       p5.noStroke();
       p5.fill(inst.colorHex);
-      p5.ellipse(0, 0, inst.size, inst.size);
+      p5.ellipse(0, 0, size, size);
     }
 
     p5.pop();

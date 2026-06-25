@@ -73,10 +73,15 @@ export default function Sidebar() {
     setLogoEnabled,
     logoMode,
     setLogoMode,
+    animate,
+    setAnimate,
+    loopDuration,
+    setLoopDuration,
   } = useDesignStore();
 
   const [hexInput, setHexInput] = useState("");
   const [exportName, setExportName] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const [areaKind, setAreaKind] = useState<AreaKind>("text");
   const [areaAnchor, setAreaAnchor] = useState<LogoAnchor>("center");
@@ -127,8 +132,22 @@ export default function Sidebar() {
   }
 
   async function handleExport() {
-    if (!exportRegistry.render) return;
     const filename = exportName.trim() || "export";
+
+    // Video-Format: nahtlose Loop als WebM aufnehmen (läuft in Echtzeit).
+    if (format === "Video") {
+      if (!exportRegistry.renderVideo || exporting) return;
+      setExporting(true);
+      try {
+        const blob = await exportRegistry.renderVideo({ duration: loopDuration, fps: 30 });
+        saveAs(blob, `${filename}.webm`);
+      } finally {
+        setExporting(false);
+      }
+      return;
+    }
+
+    if (!exportRegistry.render) return;
 
     if (exportType === "pdf" && hasSides(format)) {
       // Formate mit Vorder-/Rückseite: immer beide Seiten als 2-Seiten-PDF.
@@ -429,6 +448,37 @@ export default function Sidebar() {
 
         <SeparationLine/>
 
+        <RulerSection heading="Animation">
+          <RulerItem label="Play">
+            <div className="flex gap-2 w-full">
+              {[true, false].map((on) => (
+                <button
+                  key={String(on)}
+                  type="button"
+                  onClick={() => setAnimate(on)}
+                  className={`flex-1 py-1.5 rounded-sm text-xs uppercase transition-colors ${
+                    animate === on
+                      ? "bg-primary-color text-white"
+                      : "bg-primary-lightgrey text-primary-darkgrey hover:opacity-80"
+                  }`}
+                >
+                  {on ? "On" : "Off"}
+                </button>
+              ))}
+            </div>
+          </RulerItem>
+          <RulerItem label="Loop">
+            <Inputfield
+              placeholder="4"
+              unit="S"
+              value={String(loopDuration)}
+              onChange={(v) => setLoopDuration(Math.max(1, Number(v) || 0))}
+            />
+          </RulerItem>
+        </RulerSection>
+
+        <SeparationLine/>
+
         <RulerSection heading="Export">
           <RulerItem label="Name">
             <Inputfield
@@ -460,7 +510,12 @@ export default function Sidebar() {
         </RulerSection>
 
         <div className="flex flex-col w-full items-center">
-          <Button size="sm" text="Export" onClick={handleExport} />
+          <Button
+            size="sm"
+            text={exporting ? "Exporting…" : format === "Video" ? "Export Video" : "Export"}
+            onClick={handleExport}
+            disabled={exporting}
+          />
         </div>
         
       </div>

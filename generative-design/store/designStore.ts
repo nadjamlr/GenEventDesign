@@ -22,12 +22,16 @@ type DesignStore = {
   side: Side;
   logoEnabled: boolean;
   logoMode: LogoMode;
+  animate: boolean;
+  loopDuration: number;
   setColumns: (v: number) => void;
   setRows: (v: number) => void;
   setFormat: (v: string) => void;
   setSide: (v: Side) => void;
   setLogoEnabled: (v: boolean) => void;
   setLogoMode: (v: LogoMode) => void;
+  setAnimate: (v: boolean) => void;
+  setLoopDuration: (v: number) => void;
   setWidth: (v: number) => void;
   setHeight: (v: number) => void;
   setExportType: (v: ExportType) => void;
@@ -57,6 +61,8 @@ const useDesignStore = create<DesignStore>((set) => ({
   side: "front",
   logoEnabled: true,
   logoMode: "random",
+  animate: false,
+  loopDuration: 4,
   setColumns: (v) => set({ columns: v }),
   setRows: (v) => set({ rows: v }),
   setFormat: (v) =>
@@ -70,6 +76,8 @@ const useDesignStore = create<DesignStore>((set) => ({
   setSide: (v) => set({ side: v }),
   setLogoEnabled: (v) => set({ logoEnabled: v }),
   setLogoMode: (v) => set({ logoMode: v }),
+  setAnimate: (v) => set({ animate: v }),
+  setLoopDuration: (v) => set({ loopDuration: v }),
   setWidth: (v) => set({ width: v }),
   setHeight: (v) => set({ height: v }),
   setExportType: (v) => set({ exportType: v }),
