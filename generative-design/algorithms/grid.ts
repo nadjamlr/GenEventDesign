@@ -601,19 +601,82 @@ export function drawGrid(p5: p5Types, params: Params) {
     return result;
   }
 
+  // --- Anordnung 6: Welle ---
+  // Horizontale Reihen, deren Höhe per Sinus über die Breite schwingt; die
+  // Shapes folgen der lokalen Steigung der Welle.
+  function placeWave(): Instance[] {
+    const rowsN = Math.max(1, Math.round(Math.sqrt(count)));
+    const perRow = Math.max(1, Math.round(count / rowsN));
+    const amp = (innerH / rowsN) * 0.6;
+    const freq = 1 + Math.floor(rng() * 2);
+    const phase0 = rng() * TAU;
+    const result: Instance[] = [];
+    let i = 0;
+    for (let r = 0; r < rowsN; r++) {
+      const baseY = innerY + ((r + 0.5) / rowsN) * innerH;
+      for (let c = 0; c < perRow; c++) {
+        const fx = (c + 0.5) / perRow;
+        const theta = phase0 + fx * TAU * freq + r * 0.6;
+        const cx = innerX + fx * innerW;
+        const cy = baseY + Math.sin(theta) * amp;
+        const size = baseUnit * (0.8 + rng() * 0.4);
+        if (!inBleed(cx, cy)) continue;
+        if (intersectsExclusion(cx, cy, size)) continue;
+        const slope = (Math.cos(theta) * amp * TAU * freq) / innerW;
+        result.push({
+          idx: i++,
+          cx,
+          cy,
+          size,
+          baseRot: Math.round(Math.atan(slope) / (Math.PI / 4)) * (Math.PI / 4),
+          shapeId: pickShape(),
+          colorHex: pickColor(),
+        });
+      }
+    }
+    return result;
+  }
+
+  // --- Anordnung 7: Rahmen ---
+  // Shapes liegen nur im Randstreifen, die Mitte bleibt frei (gut für zentralen
+  // Text/Logo).
+  function placeBorder(): Instance[] {
+    const band = Math.min(innerW, innerH) * 0.22;
+    const result: Instance[] = [];
+    let placed = 0;
+    for (let attempt = 0; attempt < count * 4 && placed < count; attempt++) {
+      const size = baseUnit * (0.7 + rng() * 0.6);
+      const cx = innerX - bleedX + rng() * (innerW + bleedX * 2);
+      const cy = innerY - bleedY + rng() * (innerH + bleedY * 2);
+      const minEdge = Math.min(cx - innerX, innerX + innerW - cx, cy - innerY, innerY + innerH - cy);
+      if (minEdge > band) continue; // zu zentral
+      if (intersectsExclusion(cx, cy, size)) continue;
+      result.push({ idx: placed++, cx, cy, size, shapeId: pickShape(), colorHex: pickColor() });
+    }
+    return result;
+  }
+
   // Anordnung pro Shuffle auswürfeln: seedabhängig und seitenunabhängig (nur
   // seedParam), damit jede Generierung zufällig zwischen den Stilen wechselt
   // und Vorder-/Rückseite dieselbe Anordnung teilen.
-  const ARRANGEMENTS = ["scatter", "grid", "rings", "diagonal"] as const;
+  const ARRANGEMENTS = [
+    "scatter",
+    "grid",
+    "rings",
+    "diagonal",
+    "wave",
+    "border",
+  ] as const;
   const arrangement = ARRANGEMENTS[Math.abs(hashString(`arrangement|${seedParam}`)) % ARRANGEMENTS.length];
-  const instances =
-    arrangement === "grid"
-      ? placeGrid()
-      : arrangement === "rings"
-        ? placeRings()
-        : arrangement === "diagonal"
-          ? placeDiagonal()
-          : placeScatter();
+  const placers: Record<(typeof ARRANGEMENTS)[number], () => Instance[]> = {
+    scatter: placeScatter,
+    grid: placeGrid,
+    rings: placeRings,
+    diagonal: placeDiagonal,
+    wave: placeWave,
+    border: placeBorder,
+  };
+  const instances = (placers[arrangement] ?? placeScatter)();
 
   // `candidates` ist bereits absteigend nach Größe sortiert, `instances`
   // erbt diese Reihenfolge: größere Elemente liegen unten, kleinere obenauf –
