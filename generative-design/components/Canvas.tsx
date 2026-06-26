@@ -44,6 +44,104 @@ function applyGrain(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.globalCompositeOperation = "source-over";
 }
 
+function hashStr(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (h << 5) - h + str.charCodeAt(i);
+    h |= 0;
+  }
+  return h >>> 0;
+}
+
+// Deterministisches Pseudo-Zufall pro Rasterzelle (statt echtem Random), damit
+// derselbe Shape/Farbe-Cache-Eintrag bei erneuter Berechnung exakt gleich
+// aussieht und sich Punktzentren/-radien trotzdem organisch statt streng
+// gitterförmig anfühlen.
+function cellNoise(ix: number, iy: number, seed: number): number {
+  let h = (ix * 374761393 + iy * 668265263 + seed * 1013904223) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) | 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+// Separierbares Box-Blur (horizontal + vertikal, gleitendes Fenster) – dient
+// hier nicht der Optik selbst, sondern liefert ein grobes Distanzfeld: Pixel
+// tief im Inneren der Silhouette bleiben nahe 1, Pixel nahe am Rand fallen
+// Richtung 0 ab.
+function boxBlur(
+  src: Float32Array<ArrayBuffer>,
+  w: number,
+  h: number,
+  radius: number
+): Float32Array<ArrayBuffer> {
+  const tmp = new Float32Array(w * h);
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let sum = 0;
+    for (let x = -radius; x <= radius; x++) sum += src[row + Math.min(w - 1, Math.max(0, x))];
+    for (let x = 0; x < w; x++) {
+      tmp[row + x] = sum / (radius * 2 + 1);
+      sum -= src[row + Math.min(w - 1, Math.max(0, x - radius))];
+      sum += src[row + Math.min(w - 1, Math.max(0, x + radius + 1))];
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let sum = 0;
+    for (let y = -radius; y <= radius; y++) sum += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = sum / (radius * 2 + 1);
+      sum -= tmp[Math.min(h - 1, Math.max(0, y - radius)) * w + x];
+      sum += tmp[Math.min(h - 1, Math.max(0, y + radius + 1)) * w + x];
+    }
+  }
+  return out;
+}
+
+// Tonaler Halbton: löst die Silhouette in ein Punktraster auf, dessen
+// Punktgröße dem (über Box-Blur angenäherten) Abstand zum Rand folgt – große,
+// dichte Punkte im Zentrum, auslaufend zu nichts am Rand. `amount` (0..1)
+// blendet zwischen unverändertem Stand (0) und vollem Raster (1).
+function applyHalftone(ctx: CanvasRenderingContext2D, w: number, h: number, amount: number, seed: number) {
+  if (amount <= 0) return;
+  const img = ctx.getImageData(0, 0, w, h);
+  const alpha = img.data;
+
+  let density = new Float32Array(w * h);
+  for (let i = 0; i < density.length; i++) density[i] = alpha[i * 4 + 3] / 255;
+  const radius = Math.max(1, Math.round(Math.min(w, h) * 0.05));
+  density = boxBlur(density, w, h, radius);
+  density = boxBlur(density, w, h, radius);
+  density = boxBlur(density, w, h, radius);
+
+  const cell = Math.max(3, Math.round(Math.min(w, h) / 40));
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const a = alpha[i * 4 + 3];
+      if (a === 0) continue;
+
+      const ix = Math.floor(x / cell);
+      const iy = Math.floor(y / cell);
+      const jitterX = (cellNoise(ix, iy, seed) - 0.5) * cell * 0.5;
+      const jitterY = (cellNoise(ix, iy, seed + 1) - 0.5) * cell * 0.5;
+      const ccx = Math.min(w - 1, Math.max(0, Math.round((ix + 0.5) * cell + jitterX)));
+      const ccy = Math.min(h - 1, Math.max(0, Math.round((iy + 0.5) * cell + jitterY)));
+
+      const d = density[ccy * w + ccx];
+      const radiusJitter = 0.85 + cellNoise(ix, iy, seed + 2) * 0.3;
+      const dotR = (cell / 2) * Math.sqrt(Math.max(0, d)) * radiusJitter;
+
+      const dx = x - ccx;
+      const dy = y - ccy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const coverage = Math.max(0, Math.min(1, dotR - dist + 0.5));
+
+      alpha[i * 4 + 3] = Math.round(a * (1 - amount + amount * coverage));
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
 // Bestmöglicher unterstützter WebM-Codec für die Video-Aufnahme.
 function pickVideoMime(): string {
   const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
@@ -74,6 +172,7 @@ export default function Canvas() {
     logoMode,
     animate,
     loopDuration,
+    pixelate,
     setAreaPosition,
   } = useDesignStore();
 
@@ -95,6 +194,7 @@ export default function Canvas() {
     logoMode,
     animate,
     loopDuration,
+    pixelate,
   });
   paramsRef.current = {
     columns,
@@ -113,6 +213,7 @@ export default function Canvas() {
     logoMode,
     animate,
     loopDuration,
+    pixelate,
   };
 
   useEffect(() => {
@@ -283,7 +384,8 @@ export default function Canvas() {
       p: p5,
       id: string,
       colorHex: string,
-      targetSize = 512
+      targetSize = 512,
+      pixelateAmount = 0
     ): p5.Image | undefined {
       const raw = rawImages.get(id);
       if (!raw) return undefined;
@@ -297,7 +399,7 @@ export default function Canvas() {
       const w = Math.max(1, Math.round(raw.naturalWidth * scale));
       const h = Math.max(1, Math.round(raw.naturalHeight * scale));
 
-      const key = `${id}|${colorHex}|${bucket}`;
+      const key = `${id}|${colorHex}|${bucket}|${pixelateAmount}`;
       const cached = tintedCache.get(key);
       if (cached) return cached;
 
@@ -310,6 +412,7 @@ export default function Canvas() {
       ctx.globalCompositeOperation = "source-in";
       ctx.fillStyle = colorHex;
       ctx.fillRect(0, 0, w, h);
+      applyHalftone(ctx, w, h, pixelateAmount, hashStr(id));
       applyGrain(ctx, w, h);
 
       tintedCache.set(key, pImg);
@@ -547,7 +650,8 @@ export default function Canvas() {
     const instance = new p5((p: p5) => {
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
-        getImage: (id, colorHex, targetSize) => getTintedImage(p, id, colorHex, targetSize),
+        getImage: (id, colorHex, targetSize) =>
+          getTintedImage(p, id, colorHex, targetSize, paramsRef.current.pixelate / 10),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(p, area, w, h),
@@ -647,11 +751,13 @@ export default function Canvas() {
         side,
         logoEnabled,
         logoMode,
+        pixelate,
       } = paramsRef.current;
       const gfx = instance.createGraphics(width, height);
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
-        getImage: (id, colorHex, targetSize) => getTintedImage(instance, id, colorHex, targetSize),
+        getImage: (id, colorHex, targetSize) =>
+          getTintedImage(instance, id, colorHex, targetSize, pixelate / 10),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
@@ -700,7 +806,8 @@ export default function Canvas() {
       const gfx = instance.createGraphics(width, height);
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
-        getImage: (id, colorHex, targetSize) => getTintedImage(instance, id, colorHex, targetSize),
+        getImage: (id, colorHex, targetSize) =>
+          getTintedImage(instance, id, colorHex, targetSize, params.pixelate / 10),
       };
       const areaImagesLocal: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),

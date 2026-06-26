@@ -85,6 +85,7 @@ export default function Sidebar() {
     setAnimate,
     loopDuration,
     setLoopDuration,
+    setPixelate,
   } = useDesignStore();
 
   const [hexInput, setHexInput] = useState("");
@@ -324,6 +325,9 @@ export default function Sidebar() {
               />
             ))}
           </div>
+          <RulerItem label="Pixelate">
+            <Slider range={10} onChange={setPixelate} />
+          </RulerItem>
         </RulerSection>
 
         {!NO_AREAS_FORMATS.includes(format) && (
