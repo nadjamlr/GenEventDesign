@@ -1,9 +1,9 @@
 import type p5Types from "p5";
-import { getLogoZones, getAnchorBox } from "@/lib/logoPlacement";
+import { getLogoZones, getAnchorBox, ALL_ANCHORS, type LogoAnchor } from "@/lib/logoPlacement";
 import type { AreaDef } from "@/lib/areas";
 import { getInputFields, getInputLayout, type InputFieldDef } from "@/lib/inputFields";
 import { hasSides, type Side } from "@/lib/formats";
-import { getTextStyle } from "@/lib/textStyles";
+import { getTextStyle, DEFAULT_TEXT_STYLE } from "@/lib/textStyles";
 import { getTextColor, type TextColorName } from "@/lib/textColors";
 
 export type ShapeImageProvider = {
@@ -234,6 +234,14 @@ export function drawGrid(p5: p5Types, params: Params) {
   const isTwoSided = hasSides(format);
   const activeSide: Side | undefined = isTwoSided ? side ?? "front" : undefined;
 
+  // Bei zweiseitigen Formaten gehört jede Area zu genau einer Seite (siehe
+  // AreaDef.side in lib/areas.ts) – nur die zur gerade gezeichneten Seite
+  // passenden Areas werden berücksichtigt, damit ein auf der Rückseite
+  // platziertes Bild/Text nicht auch auf der Vorderseite auftaucht.
+  const sideAreas = isTwoSided
+    ? areas.filter((a) => (a.side ?? "front") === activeSide)
+    : areas;
+
   // Setzt Größe + Font-Weight (Inter, siehe lib/fonts.ts) für die übergebene
   // Text-Rolle (siehe lib/textStyles.ts) und liefert die Basis-Schriftgröße
   // multipliziert mit der Rollen-Größe zurück.
@@ -261,6 +269,28 @@ export function drawGrid(p5: p5Types, params: Params) {
     return finalSize;
   }
 
+  // Tatsächliche Text-Ausmaße ermitteln (statt sich auf die nominale
+  // widthRatio/heightRatio aus den Daten zu verlassen) – große Rollen wie
+  // "title"/"h1" rendern oft deutlich größer als ihre nominale Box, sonst
+  // landen Shapes in vermeintlich freien Zonen, die in Wirklichkeit vom Text
+  // überdeckt werden. Bei maxWidth wird die Zeilenzahl bei Umbruch geschätzt.
+  function measureTextFootprint(
+    text: string,
+    styleName: Parameters<typeof getTextStyle>[0],
+    baseSize: number,
+    maxWidth?: number
+  ): { w: number; h: number } {
+    const finalSize = applyTextStyle(styleName, baseSize);
+    p5.textSize(finalSize);
+    const rawWidth = p5.textWidth(text);
+    const leading = p5.textLeading();
+    if (maxWidth !== undefined && rawWidth > maxWidth) {
+      const lines = Math.max(1, Math.ceil(rawWidth / maxWidth));
+      return { w: maxWidth, h: lines * leading };
+    }
+    return { w: rawWidth, h: leading };
+  }
+
   const availableShapes = shapeImages
     ? selectedShapes.filter((id) => shapeImages.isReady(id))
     : [];
@@ -268,7 +298,7 @@ export function drawGrid(p5: p5Types, params: Params) {
   const seed = hashString(
     `${seedParam}|${activeSide ?? ""}|${columns}x${rows}|${availableShapes.join(",")}|${selectedColors.join(
       ","
-    )}|${areas.map((a) => a.id).join(",")}`
+    )}|${sideAreas.map((a) => a.id).join(",")}`
   );
   const rng = createRng(seed);
 
@@ -276,7 +306,7 @@ export function drawGrid(p5: p5Types, params: Params) {
   // und Rückseite immer gleich gedreht sind, auch wenn der Rest der
   // Komposition (Streuung, Farben, Logo) sich pro Seite unterscheidet.
   const sharedSeed = hashString(
-    `${seedParam}|${columns}x${rows}|${availableShapes.join(",")}|${selectedColors.join(",")}|${areas
+    `${seedParam}|${columns}x${rows}|${availableShapes.join(",")}|${selectedColors.join(",")}|${sideAreas
       .map((a) => a.id)
       .join(",")}`
   );
@@ -297,7 +327,7 @@ export function drawGrid(p5: p5Types, params: Params) {
   // Hintergrund-Bild-Area (anchor === "background"): füllt den kompletten
   // Rahmen und wird vor den Shapes gezeichnet. Die letzte gewinnt, falls
   // mehrere existieren. Alle übrigen Areas werden normal platziert.
-  const backgroundArea = areas
+  const backgroundArea = sideAreas
     .filter((a) => a.kind === "image" && a.anchor === "background")
     .pop();
 
@@ -310,7 +340,7 @@ export function drawGrid(p5: p5Types, params: Params) {
   }
 
   // Feste Areas (Text/Bild) bleiben von den generativen Shapes frei.
-  const resolvedAreas = resolveOverlayAreas(areas, innerW, innerH);
+  const resolvedAreas = resolveOverlayAreas(sideAreas, innerW, innerH);
 
   // Eingabefelder aus der Sidebar (z.B. Name/Position/Adresse bei der Business
   // Card) – nur ausgefüllte bzw. feste Werte werden gezeichnet, leere Felder
@@ -356,12 +386,38 @@ export function drawGrid(p5: p5Types, params: Params) {
         })()
       : undefined;
 
+  // Ausschlusszonen anhand der tatsächlich gerenderten Text-Ausmaße (siehe
+  // measureTextFootprint oben), nicht der nominalen Box – sonst können Shapes
+  // in Zonen landen, die der Text in Wirklichkeit (z.B. bei großen Rollen wie
+  // "title") überragt. Vertikal bleibt der Box-Mittelpunkt erhalten, sodass
+  // ein größerer Footprint die Box symmetrisch nach oben/unten wachsen lässt.
+  const areaExclusionRects = resolvedAreas.map(({ area, x, y, w, h }) => {
+    if (area.kind !== "text") return { x, y, w, h };
+    const baseSize = Math.min(w, h) * 0.16;
+    const measured = measureTextFootprint(area.text ?? "", area.style ?? DEFAULT_TEXT_STYLE, baseSize, w);
+    const boxH = Math.max(h, measured.h);
+    return { x, y: y + h / 2 - boxH / 2, w, h: boxH };
+  });
+  const positionedFieldExclusionRects = resolvedPositionedFields.map(({ field, text, x, y, w, h }) => {
+    const align = field.position!.align ?? "left";
+    const baseSize = Math.min(h * 0.6, w * 0.09);
+    const measured = measureTextFootprint(text, field.style, baseSize, field.position!.wrap ? w : undefined);
+    const boxH = Math.max(h, measured.h);
+    const boxW = Math.max(w, measured.w);
+    let boxX = x;
+    if (measured.w > w) {
+      if (align === "center") boxX = x + w / 2 - measured.w / 2;
+      else if (align === "right") boxX = x + w - measured.w;
+    }
+    return { x: boxX, y: y + h / 2 - boxH / 2, w: boxW, h: boxH };
+  });
+
   // Ausschlusszone für freie Shapes (Areas/Eingabefelder) – das Logo kommt
   // gleich dazu, damit auch hinter dem Logo selbst keine Shape landet.
   const staticExclusionRects = [
-    ...resolvedAreas.map(({ x, y, w, h }) => ({ x, y, w, h })),
+    ...areaExclusionRects,
     ...(inputBox ? [inputBox] : []),
-    ...resolvedPositionedFields.map(({ x, y, w, h }) => ({ x, y, w, h })),
+    ...positionedFieldExclusionRects,
   ];
 
   // Logo-Position wird hier schon bestimmt (statt erst beim Zeichnen ganz
@@ -379,12 +435,23 @@ export function drawGrid(p5: p5Types, params: Params) {
     const logoW = innerW * LOGO_WIDTH_RATIO;
     const logoH = logoW * (refImg.height / refImg.width);
 
-    const candidates = getLogoZones(format);
-    const freeCandidates = candidates.filter((anchor) => {
+    const isFree = (anchor: LogoAnchor) => {
       const { x, y } = getAnchorBox(anchor, innerX, innerY, innerW, innerH, logoW, logoH, padding);
       return !staticExclusionRects.some((a) => rectsOverlap(x, y, logoW, logoH, a.x, a.y, a.w, a.h));
-    });
-    const zones = freeCandidates.length > 0 ? freeCandidates : candidates;
+    };
+    const candidates = getLogoZones(format);
+    const freeCandidates = candidates.filter(isFree);
+    // Sind alle für dieses Format vorgesehenen Zonen durch Areas/Text belegt,
+    // notfalls auf eine freie Position aus allen 9 Ankern ausweichen – sonst
+    // würde das Logo garantiert über dem Text landen, statt ihm auszuweichen.
+    // Nur wenn wirklich nirgendwo Platz ist, doch eine (überlappende)
+    // Format-Zone nehmen, damit das Logo nicht ganz verschwindet.
+    const zones =
+      freeCandidates.length > 0
+        ? freeCandidates
+        : ALL_ANCHORS.filter(isFree).length > 0
+          ? ALL_ANCHORS.filter(isFree)
+          : candidates;
     const anchor = zones[Math.floor(rng() * zones.length)];
     const { x, y } = getAnchorBox(anchor, innerX, innerY, innerW, innerH, logoW, logoH, padding);
     logoBox = { x, y, w: logoW, h: logoH };
@@ -771,12 +838,15 @@ export function drawGrid(p5: p5Types, params: Params) {
       const brightness = sampleBrightness(p5, x, y, w, h);
       p5.noStroke();
       p5.fill(pickTextColor(brightness));
-      // Linksbündig statt zentriert: die Box-Kante (= Drag&Drop-Position)
-      // entspricht damit direkt der Text-Kante, ohne "Leerraum" durch
-      // Zentrierung in einer breiteren Box.
+      // Horizontal linksbündig (auf Wunsch), vertikal zentriert in der Box.
       p5.textAlign(p5.LEFT, p5.CENTER);
-      p5.textSize(applyTextStyle("p1", Math.min(w, h) * 0.16));
-      p5.text(area.text ?? "", x, y, w, h);
+      p5.textSize(applyTextStyle(area.style ?? DEFAULT_TEXT_STYLE, Math.min(w, h) * 0.16));
+      // Kein Height-Argument übergeben: p5 schneidet bei text(str,x,y,w,h)
+      // schon die erste Zeile komplett weg, sobald ihre Zeilenhöhe größer ist
+      // als h (z.B. bei der "title"-Rolle in der kompakten Standard-Box) –
+      // ohne h wird stattdessen nur um den als Mitte übergebenen y-Punkt
+      // zentriert, ohne Begrenzung nach oben/unten.
+      p5.text(area.text ?? "", x, y + h / 2, w);
     } else if (area.kind === "image" && areaImages) {
       const img = areaImages.getImage(area, w, h);
       if (img) {
@@ -797,8 +867,19 @@ export function drawGrid(p5: p5Types, params: Params) {
     p5.textAlign(alignX, p5.CENTER);
     const baseSize = Math.min(h * 0.6, w * 0.09);
     p5.textSize(applyTextStyle(field.style, baseSize));
-    const tx = align === "left" ? x : align === "right" ? x + w : x + w / 2;
-    p5.text(text, tx, y + h / 2);
+    if (field.position!.wrap) {
+      // Breite übergeben, damit der Text bei Erreichen von w in die nächste
+      // Zeile umbricht, statt als eine lange Zeile zu überlaufen. Kein
+      // Height-Argument (siehe Area-Text oben): sonst schneidet p5 schon die
+      // erste Zeile komplett weg, falls ihre Zeilenhöhe größer als h ist.
+      // Nur Felder mit explizitem "wrap" nutzen das (z.B. freier Beschreibungs-
+      // text), sonst bricht es eng aufeinander abgestimmte Layouts wie beim
+      // Voucher, deren Boxen bewusst breiter als der eigentliche Text sind.
+      p5.text(text, x, y + h / 2, w);
+    } else {
+      const tx = align === "left" ? x : align === "right" ? x + w : x + w / 2;
+      p5.text(text, tx, y + h / 2);
+    }
   }
 
   // Eingabefelder als Textblock zeichnen, passend zum Untergrund einfärben.

@@ -18,7 +18,7 @@ import { getGoogleFontUrl } from "@/lib/fonts";
 import { TEXT_STYLES } from "@/lib/textStyles";
 
 const STACK_GAP_RATIO = 0.04; // Abstand zwischen Vorder- und Rückseite, relativ zur Seitenhöhe
-const AREA_DRAG_MARGIN_RATIO = 0.02; // Mindestabstand zum Rahmenrand beim Drag&Drop von Areas
+const AREA_DRAG_MARGIN_RATIO = 0.06; // Mindestabstand zum Rahmenrand beim Drag&Drop von Areas (gleich auf allen 4 Seiten)
 const TAU = Math.PI * 2;
 
 // Animations-Amplitude der Punkte: jeder Punkt schwankt zufällig um seinen
@@ -324,8 +324,18 @@ export default function Canvas() {
       return { x: clientX - rect.left, y: clientY - rect.top };
     }
 
-    function findAreaAt(localX: number, localY: number, regionW: number, regionH: number) {
-      const resolved = resolveOverlayAreas(paramsRef.current.areas, regionW, regionH);
+    // Areas gehören bei zweiseitigen Formaten zu genau einer Seite (siehe
+    // AreaDef.side) – nur die zur angeklickten Seite passenden Areas zählen
+    // beim Hit-Testing, sonst ließe sich eine Rückseiten-Area über die
+    // Vorderseite greifen.
+    function areasForSide(side: Side | undefined) {
+      const all = paramsRef.current.areas;
+      if (!hasSides(paramsRef.current.format)) return all;
+      return all.filter((a) => (a.side ?? "front") === side);
+    }
+
+    function findAreaAt(localX: number, localY: number, regionW: number, regionH: number, side: Side | undefined) {
+      const resolved = resolveOverlayAreas(areasForSide(side), regionW, regionH);
       for (let i = resolved.length - 1; i >= 0; i--) {
         const r = resolved[i];
         if (localX >= r.x && localX <= r.x + r.w && localY >= r.y && localY <= r.y + r.h) {
@@ -346,7 +356,7 @@ export default function Canvas() {
       const region = sideRegion(side, fitted);
       const localX = x - region.offsetX;
       const localY = y - region.offsetY;
-      const hit = findAreaAt(localX, localY, region.w, region.h);
+      const hit = findAreaAt(localX, localY, region.w, region.h, side);
       if (!hit) return;
       dragState = {
         id: hit.area.id,
@@ -372,7 +382,7 @@ export default function Canvas() {
         }
         const side = hitSide(x, y, fitted);
         const region = sideRegion(side, fitted);
-        const hit = findAreaAt(x - region.offsetX, y - region.offsetY, region.w, region.h);
+        const hit = findAreaAt(x - region.offsetX, y - region.offsetY, region.w, region.h, side);
         canvasElt!.style.cursor = hit ? "grab" : "default";
         return;
       }

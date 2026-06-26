@@ -2,7 +2,7 @@
 // `style` zugewiesen werden. Dieselbe Rolle (z.B. "h1") sieht über alle
 // Formate hinweg gleich aus, statt pro Format eigene Größen/Weights zu
 // vergeben.
-export type TextStyleName = "title" | "h1" | "h2" | "h3" | "h4" | "p1" | "p2";
+export type TextStyleName = "title" | "h1" | "h2" | "h3" | "h4" | "p1" | "p2" | "p3";
 
 export type TextStyle = {
   /** Multiplikator auf die normale Basis-Schriftgröße. */
@@ -14,16 +14,17 @@ export type TextStyle = {
 };
 
 export const TEXT_STYLES: Record<TextStyleName, TextStyle> = {
-  title: { sizeMultiplier: 6, weight: 400 },
+  title: { sizeMultiplier: 4.5, weight: 400 },
   h1: { sizeMultiplier: 2.1, weight: 400 },
   h2: { sizeMultiplier: 1.5, weight: 400, letterSpacing: 0.04 },
   h3: { sizeMultiplier: 1.2, weight: 200, letterSpacing: 0.04 },
   h4: { sizeMultiplier: 1.2, weight: 400, letterSpacing: 0.04 },
   p1: { sizeMultiplier: 0.9, weight: 400, letterSpacing: 0.04 },
   p2: { sizeMultiplier: 0.9, weight: 200, letterSpacing: 0.04 },
+  p3: { sizeMultiplier: 0.7, weight: 200, letterSpacing: 0.06 },
 };
 
-export const DEFAULT_TEXT_STYLE: TextStyleName = "h1";
+export const DEFAULT_TEXT_STYLE: TextStyleName = "title";
 
 export function getTextStyle(style?: TextStyleName): TextStyle {
   return TEXT_STYLES[style ?? DEFAULT_TEXT_STYLE];

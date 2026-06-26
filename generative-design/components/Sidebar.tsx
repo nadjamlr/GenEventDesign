@@ -22,9 +22,11 @@ import { getInputFields } from "@/lib/inputFields"
 import { ALL_ANCHORS, ANCHOR_LABELS, type LogoAnchor } from "@/lib/logoPlacement"
 import { hasSides, type Side } from "@/lib/formats"
 import type { LogoMode } from "@/algorithms/grid"
+import { TEXT_STYLES, type TextStyleName } from "@/lib/textStyles"
 import {
   type AreaKind,
   type AreaAnchor,
+  type AreaDef,
   DEFAULT_IMAGE_AREA_SIZE,
   DEFAULT_TEXT_AREA_SIZE,
 } from "@/lib/areas"
@@ -33,13 +35,17 @@ const EXPORT_TYPES = ["png", "pdf"] as const;
 const SIDES: Side[] = ["front", "back"];
 const AREA_KINDS: AreaKind[] = ["text", "image"];
 const NO_IMAGE_AREA_FORMATS = ["Business Card", "Ticket", "Voucher"];
-const NO_AREAS_FORMATS = ["Business Card"];
+const NO_AREAS_FORMATS = ["Business Card", "Ticket", "Voucher"];
+// Bei diesen Formaten werden alle Input-Felder (Vorder- und Rückseite)
+// gemeinsam angezeigt, unabhängig vom Vorne/Hinten-Toggle.
+const SHOW_ALL_SIDES_INPUT_FORMATS = ["Business Card", "Ticket", "Voucher"];
 const LOGO_MODES: LogoMode[] = ["random", "logo", "icon"];
 const LOGO_MODE_LABELS: Record<LogoMode, string> = { random: "Random", logo: "Logo", icon: "Icon" };
 const ANCHOR_OPTIONS = ALL_ANCHORS.map((a) => ANCHOR_LABELS[a]);
 const NO_SHAPE_LABEL = "No Shape";
 const SHAPE_OPTIONS = [NO_SHAPE_LABEL, ...shapes.map((s) => s.label)];
 const BACKGROUND_LABEL = "Background";
+const TEXT_STYLE_OPTIONS = Object.keys(TEXT_STYLES) as TextStyleName[];
 
 function labelToAnchor(label: string): AreaAnchor {
   if (label === BACKGROUND_LABEL) return "background";
@@ -75,6 +81,7 @@ export default function Sidebar() {
     addArea,
     removeArea,
     toggleAreaGrayscale,
+    updateArea,
     side,
     setSide,
     logoEnabled,
@@ -99,10 +106,12 @@ export default function Sidebar() {
 
   const [areaKind, setAreaKind] = useState<AreaKind>("text");
   const [areaAnchor, setAreaAnchor] = useState<AreaAnchor>("center");
-  const [areaShapeId, setAreaShapeId] = useState<string | undefined>(shapes[0]?.id);
+  const [areaShapeId, setAreaShapeId] = useState<string | undefined>(undefined);
   const [areaText, setAreaText] = useState("");
   const [areaImageDataUrl, setAreaImageDataUrl] = useState<string | undefined>(undefined);
   const [areaGrayscale, setAreaGrayscale] = useState(false);
+  const [areaTextStyle, setAreaTextStyle] = useState<TextStyleName>("title");
+  const [editingAreaId, setEditingAreaId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const allowImageAreas = !NO_IMAGE_AREA_FORMATS.includes(format);
@@ -125,36 +134,83 @@ export default function Sidebar() {
     reader.readAsDataURL(file);
   }
 
+  function resetAreaForm() {
+    setAreaText("");
+    setAreaShapeId(undefined);
+    setAreaImageDataUrl(undefined);
+    setAreaGrayscale(false);
+    setAreaTextStyle("title");
+    setEditingAreaId(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  // Eine laufende Bearbeitung gehört zur Seite, auf der sie gestartet wurde –
+  // beim Umschalten Vorne/Hinten wird sie verworfen, statt die Area beim
+  // Speichern unbeabsichtigt auf die andere Seite zu verschieben.
+  useEffect(() => {
+    resetAreaForm();
+  }, [side]);
+
+  // Lädt eine bereits platzierte Area zum Weiterbearbeiten in das Formular
+  // oben (Position/Shape/Text/Bild/Textgröße). Beim Speichern (siehe
+  // handleAddArea) wird ein evtl. per Drag&Drop gesetzter x/y-Versatz wieder
+  // verworfen, damit der neu gewählte Anker tatsächlich greift.
+  function startEditArea(area: AreaDef) {
+    setEditingAreaId(area.id);
+    setAreaKind(area.kind);
+    setAreaAnchor(area.anchor);
+    setAreaText(area.text ?? "");
+    setAreaShapeId(area.shapeId);
+    setAreaImageDataUrl(area.imageDataUrl);
+    setAreaGrayscale(!!area.grayscale);
+    setAreaTextStyle(area.style ?? "title");
+  }
+
   function handleAddArea() {
     if (areaKind === "text") {
       if (!areaText.trim()) return;
-      addArea({ kind: "text", anchor: areaAnchor, text: areaText, ...DEFAULT_TEXT_AREA_SIZE });
-      setAreaText("");
+      const payload = {
+        kind: "text" as const,
+        anchor: areaAnchor,
+        text: areaText,
+        style: areaTextStyle,
+        side: formatHasSides ? side : undefined,
+        ...DEFAULT_TEXT_AREA_SIZE,
+      };
+      if (editingAreaId) {
+        updateArea(editingAreaId, { ...payload, x: undefined, y: undefined });
+      } else {
+        addArea(payload);
+      }
     } else {
       if (!areaImageDataUrl) return;
-      if (areaAnchor === "background") {
-        // Hintergrund-Bild: keine Maske/Shape nötig, füllt den ganzen Rahmen.
-        addArea({
-          kind: "image",
-          anchor: "background",
-          imageDataUrl: areaImageDataUrl,
-          grayscale: areaGrayscale,
-          ...DEFAULT_IMAGE_AREA_SIZE,
-        });
+      const payload =
+        areaAnchor === "background"
+          ? {
+              // Hintergrund-Bild: keine Maske/Shape nötig, füllt den ganzen Rahmen.
+              kind: "image" as const,
+              anchor: "background" as const,
+              imageDataUrl: areaImageDataUrl,
+              grayscale: areaGrayscale,
+              side: formatHasSides ? side : undefined,
+              ...DEFAULT_IMAGE_AREA_SIZE,
+            }
+          : {
+              kind: "image" as const,
+              anchor: areaAnchor,
+              shapeId: areaShapeId,
+              imageDataUrl: areaImageDataUrl,
+              grayscale: areaGrayscale,
+              side: formatHasSides ? side : undefined,
+              ...DEFAULT_IMAGE_AREA_SIZE,
+            };
+      if (editingAreaId) {
+        updateArea(editingAreaId, { ...payload, x: undefined, y: undefined });
       } else {
-        addArea({
-          kind: "image",
-          anchor: areaAnchor,
-          shapeId: areaShapeId,
-          imageDataUrl: areaImageDataUrl,
-          grayscale: areaGrayscale,
-          ...DEFAULT_IMAGE_AREA_SIZE,
-        });
+        addArea(payload);
       }
-      setAreaImageDataUrl(undefined);
-      setAreaGrayscale(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     }
+    resetAreaForm();
   }
 
   function handleHexEnter(value: string) {
@@ -225,12 +281,18 @@ export default function Sidebar() {
 
   const colors = [...DEFAULT_COLORS, ...customColors.map((hex) => ({ id: hex, hex }))];
   const formatHasSides = hasSides(format);
+  const showAllSidesInput = SHOW_ALL_SIDES_INPUT_FORMATS.includes(format);
   // Felder mit defaultValue sind schon ohne Eingabe sichtbar (siehe grid.ts
   // resolveFieldText) – sie müssen also nicht zusätzlich in der Sidebar editierbar sein.
-  const inputFields = getInputFields(format, formatHasSides ? side : undefined).filter(
+  const inputFields = getInputFields(format, formatHasSides && !showAllSidesInput ? side : undefined).filter(
     (field) => field.defaultValue === undefined
   );
   const showInputSection = inputFields.length > 0;
+  // Areas gehören bei zweiseitigen Formaten zu genau einer Seite (siehe
+  // AreaDef.side) – nur die zur gerade gewählten Seite anzeigen/bearbeiten.
+  const visibleAreas = formatHasSides
+    ? areas.filter((area) => (area.side ?? "front") === side)
+    : areas;
 
   return (
     <div className="fixed top-0 right-0 h-screen w-78 bg-primary-black flex flex-col gap-6 px-5 py-8 overflow-y-auto">
@@ -281,8 +343,27 @@ export default function Sidebar() {
           )}
         </RulerSection>
 
-        <SeparationLine/>
+        {showInputSection && (
+          <>
+            <SeparationLine/>
 
+            <RulerSection heading="Input">
+              {inputFields.map((field) => (
+                <RulerItem key={field.key} label={field.label}>
+                  <Inputfield
+                    placeholder={field.label}
+                    disabled={field.locked}
+                    value={field.locked ? field.defaultValue ?? "" : inputValues[field.key] ?? ""}
+                    onChange={field.locked ? undefined : (v) => setInputValue(field.key, v)}
+                  />
+                </RulerItem>
+              ))}
+            </RulerSection>
+          </>
+        )}
+
+        <SeparationLine/>
+        
         <RulerSection
           heading="Layout">
           <RulerItem label="Columns">
@@ -296,7 +377,7 @@ export default function Sidebar() {
         <SeparationLine/>
 
         <RulerSection heading="Colors">
-          <div className="grid grid-cols-5 gap-2 px-2">
+          <div className="grid grid-cols-6 gap-2 px-2">
             {colors.map((color) => (
               <ColorButton
                 key={color.id}
@@ -375,9 +456,19 @@ export default function Sidebar() {
           </RulerItem>
 
           {areaKind === "text" ? (
-            <RulerItem label="Text">
-              <Inputfield placeholder="Text" value={areaText} onChange={setAreaText} />
-            </RulerItem>
+            <>
+              <RulerItem label="Text">
+                <Inputfield placeholder="Text" value={areaText} onChange={setAreaText} />
+              </RulerItem>
+              <RulerItem label="Font Size">
+                <Dropdown
+                  label="Choose"
+                  value={areaTextStyle}
+                  fields={TEXT_STYLE_OPTIONS}
+                  onChange={(v) => setAreaTextStyle(v as TextStyleName)}
+                />
+              </RulerItem>
+            </>
           ) : (
             <>
               {areaAnchor !== "background" && (
@@ -427,16 +518,26 @@ export default function Sidebar() {
             </>
           )}
 
-          <div className="flex flex-col w-full items-center px-2 mt-2">
-            <Button size="sm" text="Add Area" onClick={handleAddArea} />
+          <div className="flex flex-col w-full items-center gap-2 px-2 mt-2">
+            <div className="flex gap-2 w-full justify-center">
+              <Button size="sm" text={editingAreaId ? "Update Area" : "Add Area"} onClick={handleAddArea} />
+              {editingAreaId && (
+                <Button size="sm" text="Cancel" color="grey" onClick={resetAreaForm} />
+              )}
+            </div>
           </div>
 
-          {areas.length > 0 && (
+          {visibleAreas.length > 0 && (
             <div className="flex flex-col gap-1 px-2 mt-2">
-              {areas.map((area) => (
+              {visibleAreas.map((area) => (
                 <div
                   key={area.id}
-                  className="flex items-center justify-between gap-2 bg-primary-lightgrey rounded-sm px-3 py-1.5 text-xs text-primary-darkgrey"
+                  onClick={() => startEditArea(area)}
+                  className={`flex items-center justify-between gap-2 rounded-sm px-3 py-1.5 text-xs text-primary-darkgrey cursor-pointer transition-colors ${
+                    area.id === editingAreaId
+                      ? "bg-primary-color/30 ring-1 ring-primary-color"
+                      : "bg-primary-lightgrey hover:opacity-80"
+                  }`}
                 >
                   <span className="truncate">
                     {area.kind === "text" ? "Text" : "Bild"} ·{" "}
@@ -446,7 +547,10 @@ export default function Sidebar() {
                   {area.kind === "image" && (
                     <button
                       type="button"
-                      onClick={() => toggleAreaGrayscale(area.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleAreaGrayscale(area.id);
+                      }}
                       className={`shrink-0 text-[10px] uppercase px-1.5 py-0.5 rounded-sm ${
                         area.grayscale
                           ? "bg-primary-color text-white"
@@ -458,7 +562,11 @@ export default function Sidebar() {
                   )}
                   <button
                     type="button"
-                    onClick={() => removeArea(area.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (editingAreaId === area.id) resetAreaForm();
+                      removeArea(area.id);
+                    }}
                     className="shrink-0 text-primary-black hover:opacity-60"
                   >
                     ×
@@ -467,25 +575,6 @@ export default function Sidebar() {
               ))}
             </div>
           )}
-            </RulerSection>
-          </>
-        )}
-
-        {showInputSection && (
-          <>
-            <SeparationLine/>
-
-            <RulerSection heading="Input">
-              {inputFields.map((field) => (
-                <RulerItem key={field.key} label={field.label}>
-                  <Inputfield
-                    placeholder={field.label}
-                    disabled={field.locked}
-                    value={field.locked ? field.defaultValue ?? "" : inputValues[field.key] ?? ""}
-                    onChange={field.locked ? undefined : (v) => setInputValue(field.key, v)}
-                  />
-                </RulerItem>
-              ))}
             </RulerSection>
           </>
         )}

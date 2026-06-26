@@ -50,6 +50,7 @@ type DesignStore = {
   removeArea: (id: string) => void;
   toggleAreaGrayscale: (id: string) => void;
   setAreaPosition: (id: string, x: number, y: number) => void;
+  updateArea: (id: string, updates: Partial<Omit<AreaDef, "id">>) => void;
 };
 
 const useDesignStore = create<DesignStore>((set) => ({
@@ -62,7 +63,7 @@ const useDesignStore = create<DesignStore>((set) => ({
   exportType: FORMAT_SIZES[DEFAULT_FORMAT].defaultExportType ?? "png",
   selectedShapes: shapes[0] ? [shapes[0].id] : [],
   customColors: [],
-  selectedColors: [],
+  selectedColors: ["#000000"],
   seed: Math.floor(Math.random() * 1e9),
   inputValues: {},
   areas: [],
@@ -137,6 +138,10 @@ const useDesignStore = create<DesignStore>((set) => ({
   setAreaPosition: (id, x, y) =>
     set((state) => ({
       areas: state.areas.map((a) => (a.id === id ? { ...a, x, y } : a)),
+    })),
+  updateArea: (id, updates) =>
+    set((state) => ({
+      areas: state.areas.map((a) => (a.id === id ? { ...a, ...updates } : a)),
     })),
 }));
 
