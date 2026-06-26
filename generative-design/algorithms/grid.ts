@@ -8,8 +8,17 @@ import { getTextColor, type TextColorName } from "@/lib/textColors";
 
 export type ShapeImageProvider = {
   isReady: (id: string) => boolean;
-  /** targetSize = gewünschte Anzeigegröße in px, damit große Shapes scharf gerastert werden. */
-  getImage: (id: string, colorHex: string, targetSize?: number) => p5Types.Image | undefined;
+  /**
+   * targetSize = gewünschte Anzeigegröße in px, damit große Shapes scharf
+   * gerastert werden. `time` = Animations-Phase [0,1): ist sie gesetzt,
+   * pulsieren die Punkte im Gitter; undefined = statisches Gitter.
+   */
+  getImage: (
+    id: string,
+    colorHex: string,
+    targetSize?: number,
+    time?: number
+  ) => p5Types.Image | undefined;
 };
 
 export type LogoVariantImages = {
@@ -65,10 +74,6 @@ const POSITIONED_FIELD_HEIGHT_RATIO = 0.08; // Höhe eines einzeln positionierte
 const MIN_GAP_RATIO = 0.8; // Mindestabstand zwischen Mittelpunkten, relativ zur Summe der halben Größen – kleiner erlaubt mehr Überlappung (Tiefe), größer verhindert sie stärker
 const MAX_PLACEMENT_ATTEMPTS = 24; // Versuche pro Element, eine Position mit genug Abstand zu Nachbarn zu finden
 
-// Bewegungs-Amplituden für die Animation, relativ zur Elementgröße (baseUnit)
-// bzw. als absolute Faktoren.
-const MOTION_PULSE = 0.5; // max. Größen-Pulsieren
-const SQUASH_AMOUNT = 0.35; // max. Stauchung beim Squash & Stretch (0 = aus, 1 = extrem)
 const TAU = Math.PI * 2;
 
 function hashString(str: string): number {
@@ -88,45 +93,6 @@ function createRng(seed: number) {
     state = (state * 1664525 + 1013904223) | 0;
     return (state >>> 0) / 4294967296;
   };
-}
-
-// Eigenes, seed-gekoppeltes Value-Noise (glatt, deterministisch). Bewusst
-// unabhängig von p5.noise, da das in dieser p5-Version (2.x) anders/instabil
-// ist (z.B. fehlt noiseSeed).
-function smoothstep(t: number): number {
-  return t * t * (3 - 2 * t);
-}
-
-function hash2(ix: number, iy: number, seed: number): number {
-  let h = (ix * 374761393 + iy * 668265263 + seed * 1013904223) | 0;
-  h = (Math.imul(h ^ (h >>> 13), 1274126177)) | 0;
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296; // [0,1)
-}
-
-function valNoise(x: number, y: number, seed: number): number {
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const xf = x - x0;
-  const yf = y - y0;
-  const v00 = hash2(x0, y0, seed);
-  const v10 = hash2(x0 + 1, y0, seed);
-  const v01 = hash2(x0, y0 + 1, seed);
-  const v11 = hash2(x0 + 1, y0 + 1, seed);
-  const u = smoothstep(xf);
-  const w = smoothstep(yf);
-  const a = v00 + (v10 - v00) * u;
-  const b = v01 + (v11 - v01) * u;
-  return a + (b - a) * w; // [0,1)
-}
-
-// Value-Noise-Wert, der über eine volle Loop-Phase (0..1) nahtlos zum
-// Startwert zurückkehrt (Sampling entlang eines Kreises) und bei phase 0/1
-// exakt 0 liefert – so bleibt das statische Bild bei time=0/undefined
-// unverändert und die Animation läuft endlos ohne sichtbaren Sprung.
-function loopDelta(seed: number, bx: number, by: number, phase: number, radius = 0.6): number {
-  const v = valNoise(bx + radius * Math.cos(TAU * phase), by + radius * Math.sin(TAU * phase), seed);
-  const v0 = valNoise(bx + radius, by, seed); // phase 0: cos=1, sin=0
-  return v - v0;
 }
 
 function rectsOverlap(
@@ -770,40 +736,20 @@ export function drawGrid(p5: p5Types, params: Params) {
   // Gewusel.
 
   for (const inst of instances) {
-    const { cx, cy } = inst;
-    let { size } = inst;
+    const { cx, cy, size } = inst;
     const rot = inst.baseRot ?? angleStep;
-    let sx = 1;
-    let sy = 1;
 
-    // Pro Element eine eigene, über die Loop-Phase nahtlose Bewegung. Die
-    // stabile Generierungs-Id (inst.idx) sorgt dafür, dass jedes Element über
-    // die Frames hinweg konsistent driftet/pulsiert.
-    if (animate) {
-      const k = inst.idx * 1.7;
-
-      // Dezentes, gleichmäßiges Größen-Pulsieren zusätzlich zum Squash.
-      size *= 1 + loopDelta(seed, k + 99, 7.1, phase) * MOTION_PULSE;
-
-      // Squash & Stretch statt Rotation: die Shape staucht sich (kürzer +
-      // breiter) und federt wieder in ihre Ausgangsform zurück. cos-basiert,
-      // daher bei phase 0/1 exakt neutral (nahtlose Schleife). Ein Teil der
-      // Shapes pulsiert doppelt so schnell – für organische Varianz.
-      const squashCycles = hash2(inst.idx, 33, seed) < 0.5 ? 1 : 2;
-      const squash = ((1 - Math.cos(TAU * phase * squashCycles)) / 2) * SQUASH_AMOUNT;
-      sx = 1 + squash;
-      sy = 1 - squash;
-    }
-
+    // Die Animation steckt jetzt im Punktgitter selbst: bei gesetzter Phase
+    // pulsieren die Punkte (zufällig größer/kleiner). Größe und Form der Shape
+    // bleiben dabei unverändert.
     const img =
       inst.shapeId && shapeImages
-        ? shapeImages.getImage(inst.shapeId, inst.colorHex, size)
+        ? shapeImages.getImage(inst.shapeId, inst.colorHex, size, animate ? phase : undefined)
         : undefined;
 
     p5.push();
     p5.translate(cx, cy);
     p5.rotate(rot);
-    p5.scale(sx, sy);
 
     if (img) {
       const fit = Math.min(size / img.width, size / img.height);

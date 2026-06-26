@@ -19,6 +19,31 @@ import { TEXT_STYLES } from "@/lib/textStyles";
 
 const STACK_GAP_RATIO = 0.04; // Abstand zwischen Vorder- und Rückseite, relativ zur Seitenhöhe
 const AREA_DRAG_MARGIN_RATIO = 0.02; // Mindestabstand zum Rahmenrand beim Drag&Drop von Areas
+const TAU = Math.PI * 2;
+
+// Animations-Amplitude der Punkte: jeder Punkt schwankt zufällig um seinen
+// Basisradius. Min/Max begrenzen, wie stark er dabei wächst/schrumpft.
+const DOT_PULSE_MIN = 0.25;
+const DOT_PULSE_MAX = 0.8;
+
+// Deterministisches Pseudo-Zufall pro Gitterknoten (i,j) + Seed – damit jeder
+// Punkt eine eigene, über die Frames stabile Phase/Amplitude bekommt.
+function dotRand(i: number, j: number, seed: number): number {
+  let h = (i * 374761393 + j * 668265263 + seed * 1013904223) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) | 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+// Stabiler Seed pro Shape/Farbe, damit verschiedene Shapes nicht im Gleichtakt
+// pulsieren.
+function strSeed(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
 
 // Auflösungs-Slider (0..10) -> Anzahl der Rasterzellen über die längere
 // Shape-Seite. Höher = stärker "hineingezoomt" (größere Zellen, weniger
@@ -52,7 +77,9 @@ function drawDotGrid(
   h: number,
   colorHex: string,
   cellCount: number,
-  dotRatio: number
+  dotRatio: number,
+  phase?: number,
+  seed = 0
 ) {
   const cell = Math.max(w, h) / cellCount;
   const cx = w / 2;
@@ -65,7 +92,7 @@ function drawDotGrid(
   ctx.lineWidth = Math.max(1, cell * 0.05);
   ctx.lineCap = "round";
 
-  // Verbindungslinien (durch die Punktzentren).
+  // Verbindungslinien (durch die Punktzentren) – bleiben statisch.
   const left = cx - nx * cell;
   const right = cx + nx * cell;
   const top = cy - ny * cell;
@@ -83,12 +110,25 @@ function drawDotGrid(
   }
   ctx.stroke();
 
-  // Punkte an jedem Gitterknoten.
+  // Punkte an jedem Gitterknoten. Bei gesetzter Phase pulsiert jeder Punkt um
+  // seinen Basisradius – mit eigener Phasenverschiebung, Amplitude und (1- oder
+  // 2-facher) Frequenz, sodass sie zufällig größer/kleiner werden. Über eine
+  // ganze Loop (phase 0..1) kehrt jeder Punkt nahtlos zur Ausgangsgröße zurück.
   const dotR = cell * dotRatio;
+  const maxR = cell * 0.5; // Punkte nie über die Zelle hinaus wachsen lassen
   for (let j = -ny; j <= ny; j++) {
     for (let i = -nx; i <= nx; i++) {
+      let r = dotR;
+      if (phase !== undefined) {
+        const offset = dotRand(i, j, seed);
+        const amp = DOT_PULSE_MIN + dotRand(i, j, seed + 7) * (DOT_PULSE_MAX - DOT_PULSE_MIN);
+        const freq = dotRand(i, j, seed + 13) < 0.5 ? 1 : 2;
+        r = dotR * (1 + amp * Math.sin(TAU * (freq * phase + offset)));
+        r = Math.max(0, Math.min(maxR, r));
+      }
+      if (r <= 0) continue;
       ctx.beginPath();
-      ctx.arc(cx + i * cell, cy + j * cell, dotR, 0, Math.PI * 2);
+      ctx.arc(cx + i * cell, cy + j * cell, r, 0, TAU);
       ctx.fill();
     }
   }
@@ -311,8 +351,14 @@ export default function Canvas() {
     // Rohbilder (unverändertes schwarzes Silhouetten-SVG) pro Shape-Id.
     const rawImages = new Map<string, HTMLImageElement>();
     const loadingRaw = new Set<string>();
-    // Eingefärbte Varianten, gecacht pro "shapeId|hexFarbe".
+    // Statische Punktgitter, gecacht pro "shapeId|Farbe|Auflösung|Punktgröße".
     const tintedCache = new Map<string, p5.Image>();
+    // Animierte Punktgitter werden pro Frame neu gezeichnet; dieser Cache
+    // teilt identische (Shape|Farbe|…) nur innerhalb desselben Frames und wird
+    // beim Phasenwechsel geleert, damit nicht pro Frame unbegrenzt Bilder
+    // wachsen (gerade bei großen Buckets sonst ein Speicherproblem).
+    const animFrameCache = new Map<string, p5.Image>();
+    let animFrameToken: number | undefined;
 
     function ensureRawLoaded(ids: string[]) {
       for (const id of ids) {
@@ -346,7 +392,8 @@ export default function Canvas() {
       colorHex: string,
       targetSize = 512,
       gridResolution = 5,
-      dotSize = 4
+      dotSize = 4,
+      time?: number
     ): p5.Image | undefined {
       const raw = rawImages.get(id);
       if (!raw) return undefined;
@@ -359,19 +406,34 @@ export default function Canvas() {
       const scale = bucket / longSide;
       const w = Math.max(1, Math.round(raw.naturalWidth * scale));
       const h = Math.max(1, Math.round(raw.naturalHeight * scale));
-
+      const cellCount = resolutionToCellCount(gridResolution);
+      const dotRatio = dotSizeToRatio(dotSize);
       const key = `${id}|${colorHex}|${bucket}|${gridResolution}|${dotSize}`;
-      const cached = tintedCache.get(key);
-      if (cached) return cached;
 
-      // Shape als Punktgitter rendern: Punkte + Verbindungslinien, auf die
-      // SVG-Silhouette (in Zielgröße neu gerastert, daher scharf) beschnitten.
+      // Statisch (keine Animation): dauerhaft cachen, da unverändert.
+      if (time === undefined) {
+        const cached = tintedCache.get(key);
+        if (cached) return cached;
+        const pImg = p.createImage(w, h);
+        const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext;
+        drawDotGrid(ctx, raw, w, h, colorHex, cellCount, dotRatio);
+        tintedCache.set(key, pImg);
+        return pImg;
+      }
+
+      // Animiert: Punkte pulsieren mit der Phase. Pro Frame (= Phase) wird jedes
+      // (Shape|Farbe|…) nur einmal gerendert und über alle Instanzen geteilt;
+      // beim Phasenwechsel wird der Frame-Cache geleert.
+      if (animFrameToken !== time) {
+        animFrameCache.clear();
+        animFrameToken = time;
+      }
+      const cachedFrame = animFrameCache.get(key);
+      if (cachedFrame) return cachedFrame;
       const pImg = p.createImage(w, h);
-      const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D })
-        .drawingContext;
-      drawDotGrid(ctx, raw, w, h, colorHex, resolutionToCellCount(gridResolution), dotSizeToRatio(dotSize));
-
-      tintedCache.set(key, pImg);
+      const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext;
+      drawDotGrid(ctx, raw, w, h, colorHex, cellCount, dotRatio, time, strSeed(`${id}|${colorHex}`));
+      animFrameCache.set(key, pImg);
       return pImg;
     }
 
@@ -606,8 +668,8 @@ export default function Canvas() {
     const instance = new p5((p: p5) => {
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
-        getImage: (id, colorHex, targetSize) =>
-          getTintedImage(p, id, colorHex, targetSize, paramsRef.current.gridResolution, paramsRef.current.dotSize),
+        getImage: (id, colorHex, targetSize, time) =>
+          getTintedImage(p, id, colorHex, targetSize, paramsRef.current.gridResolution, paramsRef.current.dotSize, time),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(p, area, w, h),
@@ -713,8 +775,8 @@ export default function Canvas() {
       const gfx = instance.createGraphics(width, height);
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
-        getImage: (id, colorHex, targetSize) =>
-          getTintedImage(instance, id, colorHex, targetSize, gridResolution, dotSize),
+        getImage: (id, colorHex, targetSize, time) =>
+          getTintedImage(instance, id, colorHex, targetSize, gridResolution, dotSize, time),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
@@ -763,8 +825,8 @@ export default function Canvas() {
       const gfx = instance.createGraphics(width, height);
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
-        getImage: (id, colorHex, targetSize) =>
-          getTintedImage(instance, id, colorHex, targetSize, params.gridResolution, params.dotSize),
+        getImage: (id, colorHex, targetSize, time) =>
+          getTintedImage(instance, id, colorHex, targetSize, params.gridResolution, params.dotSize, time),
       };
       const areaImagesLocal: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
