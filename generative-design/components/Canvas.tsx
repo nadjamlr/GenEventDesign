@@ -652,6 +652,7 @@ export default function Canvas() {
     const mockupImages = new Map<string, p5.Image>();
     const loadingMockups = new Set<string>();
     let designGfx: p5.Graphics | undefined; // gecachtes Design-Graphics fürs Live-Rendering
+    let maskedGfx: p5.Graphics | undefined; // gecachtes, auf die Mockup-Silhouette maskiertes Design
 
     function ensureMockupLoaded(p: p5, src: string) {
       if (mockupImages.has(src) || loadingMockups.has(src)) return;
@@ -710,9 +711,52 @@ export default function Canvas() {
       target.imageMode(target.CORNER);
       if (shirt) target.image(shirt, 0, 0, w, h);
       else target.background(255);
-      target.image(dg, Math.round(w * region.x), Math.round(h * region.y), rw, rh);
 
-      if (!cached) dg.remove();
+      // Auf die Mockup-Silhouette maskieren (siehe lib/formats.ts maskSrc):
+      // das Design soll die Form des Produktfotos annehmen (z.B. T-Shirt-
+      // Umriss inkl. Kragenrundung), statt als hartes Rechteck drüberzuliegen.
+      let toComposite: p5.Graphics | p5.Image = dg;
+      if (fmt.maskSrc) {
+        ensureMockupLoaded(p5i, fmt.maskSrc);
+        const maskImg = mockupImages.get(fmt.maskSrc);
+        if (maskImg) {
+          let mg: p5.Graphics;
+          if (cached) {
+            if (!maskedGfx || maskedGfx.width !== rw || maskedGfx.height !== rh) {
+              maskedGfx?.remove();
+              maskedGfx = p5i.createGraphics(rw, rh);
+            }
+            mg = maskedGfx;
+          } else {
+            mg = p5i.createGraphics(rw, rh);
+          }
+          mg.clear();
+          mg.imageMode(mg.CORNER);
+          mg.image(dg, 0, 0, rw, rh);
+          const ctx = (mg as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext;
+          ctx.globalCompositeOperation = "destination-in";
+          mg.image(
+            maskImg,
+            0,
+            0,
+            rw,
+            rh,
+            region.x * maskImg.width,
+            region.y * maskImg.height,
+            region.w * maskImg.width,
+            region.h * maskImg.height
+          );
+          ctx.globalCompositeOperation = "source-over";
+          toComposite = mg;
+        }
+      }
+
+      target.image(toComposite, Math.round(w * region.x), Math.round(h * region.y), rw, rh);
+
+      if (!cached) {
+        dg.remove();
+        if (toComposite !== dg) (toComposite as p5.Graphics).remove();
+      }
     }
 
     // Google Font (siehe lib/fonts.ts) wird pro benötigtem Weight einzeln

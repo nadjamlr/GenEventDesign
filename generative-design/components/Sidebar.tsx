@@ -321,26 +321,6 @@ export default function Sidebar() {
               onChange={(v) => setHeight(Number(v) || 0)}
             />
           </RulerItem>
-          {formatHasSides && (
-            <RulerItem label="Side">
-              <div className="flex gap-2 w-full">
-                {SIDES.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setSide(s)}
-                    className={`flex-1 py-1.5 rounded-sm text-xs uppercase transition-colors ${
-                      side === s
-                        ? "bg-primary-color text-white"
-                        : "bg-primary-lightgrey text-primary-darkgrey hover:opacity-80"
-                    }`}
-                  >
-                    {s === "front" ? "Vorne" : "Hinten"}
-                  </button>
-                ))}
-              </div>
-            </RulerItem>
-          )}
         </RulerSection>
 
         {showInputSection && (
@@ -427,6 +407,26 @@ export default function Sidebar() {
             <SeparationLine/>
 
             <RulerSection heading="Areas">
+          {formatHasSides && (
+            <RulerItem label="Side">
+              <div className="flex gap-2 w-full">
+                {SIDES.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setSide(s)}
+                    className={`flex-1 py-1.5 rounded-sm text-xs uppercase transition-colors ${
+                      side === s
+                        ? "bg-primary-color text-white"
+                        : "bg-primary-lightgrey text-primary-darkgrey hover:opacity-80"
+                    }`}
+                  >
+                    {s === "front" ? "Vorne" : "Hinten"}
+                  </button>
+                ))}
+              </div>
+            </RulerItem>
+          )}
           <RulerItem label="Kind">
             <div className="flex gap-2 w-full">
               {availableAreaKinds.map((kind) => (

@@ -14,6 +14,13 @@ export type FormatSize = {
   mockupSrc?: string;
   /** Design-Zone auf dem Mockup (z.B. Brust), als Anteil (0..1) der Canvas. */
   designRegion?: { x: number; y: number; w: number; h: number };
+  /**
+   * Alpha-Maske (gleiche Pixel-Proportionen wie mockupSrc) – das Design wird
+   * vor dem Compositing auf diese Silhouette zugeschnitten (siehe
+   * drawComposition in Canvas.tsx), damit es z.B. der Kragenrundung/den
+   * Schultern eines T-Shirts folgt statt als hartes Rechteck draufzuliegen.
+   */
+  maskSrc?: string;
 };
 
 export const FORMAT_SIZES: Record<string, FormatSize> = {
@@ -27,13 +34,17 @@ export const FORMAT_SIZES: Record<string, FormatSize> = {
   Voucher: { width: 1000, height: 500, defaultExportType: "pdf", hasSides: true },
   Sticker: { width: 800, height: 800, defaultExportType: "png" },
   Skateboard: { width: 250, height: 1000, cornerRadius: 110, defaultExportType: "pdf" },
-  // Foto-Mockup eines weißen T-Shirts; das Design sitzt auf der Brust.
+  // Foto-Mockup eines weißen T-Shirts; das Design füllt die komplette Front
+  // (Brust bis Saum), bleibt aber innerhalb des Rumpfbereichs (nicht über die
+  // Ärmel hinaus), da es als einfaches Rechteck ohne Perspektiv-Verzug auf
+  // das Foto gelegt wird (siehe drawComposition in Canvas.tsx).
   "T-Shirt": {
     width: 1200,
     height: 1500,
     defaultExportType: "png",
     mockupSrc: "/image/Freestyler_White_Packshot_Front_Main_0_44747_1200x1500_1280x1280.jpg",
-    designRegion: { x: 0.34, y: 0.26, w: 0.1, h: 0.1 },
+    maskSrc: "/image/Freestyler_White_mask.png",
+    designRegion: { x: 0.57, y: 0.3, w: 0.1, h: 0.1 },
   },
 };
 
