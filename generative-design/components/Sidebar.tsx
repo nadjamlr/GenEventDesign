@@ -87,8 +87,10 @@ export default function Sidebar() {
     setLoopDuration,
     gridResolution,
     dotSize,
+    dotVariation,
     setGridResolution,
     setDotSize,
+    setDotVariation,
   } = useDesignStore();
 
   const [hexInput, setHexInput] = useState("");
@@ -333,6 +335,9 @@ export default function Sidebar() {
           </RulerItem>
           <RulerItem label="Dots">
             <Slider range={10} defaultValue={dotSize} onChange={setDotSize} />
+          </RulerItem>
+          <RulerItem label="Texture">
+            <Slider range={10} defaultValue={dotVariation} onChange={setDotVariation} />
           </RulerItem>
         </RulerSection>
 

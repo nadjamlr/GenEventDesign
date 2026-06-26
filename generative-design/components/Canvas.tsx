@@ -64,35 +64,70 @@ function dotSizeToRatio(dotSize: number): number {
   return DOT_MIN_RATIO + t * (DOT_MAX_RATIO - DOT_MIN_RATIO);
 }
 
+// Texture-Slider (0..10) -> 0..1: Stärke der rauschbasierten Größenvariation.
+function sliderToAmount(v: number): number {
+  return Math.max(0, Math.min(1, v / 10));
+}
+
+// Feature-Größe des Rauschfeldes: kleiner = größere zusammenhängende Flächen.
+const SIZE_NOISE_SCALE = 0.28;
+
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
+
+// Glattes Value-Noise auf Basis des per-Knoten-Hashes (dotRand): benachbarte
+// Punkte bekommen ähnliche Werte, sodass Größen-/Farbverläufe in Flächen
+// (statt punktweisem Rauschen) entstehen.
+function valueNoise(x: number, y: number, seed: number): number {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const xf = x - x0;
+  const yf = y - y0;
+  const v00 = dotRand(x0, y0, seed);
+  const v10 = dotRand(x0 + 1, y0, seed);
+  const v01 = dotRand(x0, y0 + 1, seed);
+  const v11 = dotRand(x0 + 1, y0 + 1, seed);
+  const u = smoothstep(xf);
+  const v = smoothstep(yf);
+  return (v00 + (v10 - v00) * u) * (1 - v) + (v01 + (v11 - v01) * u) * v;
+}
+
 // Zeichnet ein regelmäßiges Gitter aus Punkten, die durch dünne Linien
 // verbunden sind (Lattice), und beschneidet es anschließend per
 // "destination-in" auf die Shape-Silhouette `raw` – der Rand des Gitters
 // erhält dadurch exakt die Form der Shape. Das Gitter ist auf die Bildmitte
 // zentriert und reicht über alle Ränder hinaus, damit die Silhouette überall
 // gefüllt ist.
+type DotGridOptions = {
+  baseColor: string;
+  cellCount: number;
+  dotRatio: number;
+  variation: number; // 0..1 rauschbasierte Größenvariation
+  seed: number;
+  phase?: number; // gesetzt = Punkte pulsieren
+};
+
 function drawDotGrid(
   ctx: CanvasRenderingContext2D,
   raw: HTMLImageElement,
   w: number,
   h: number,
-  colorHex: string,
-  cellCount: number,
-  dotRatio: number,
-  phase?: number,
-  seed = 0
+  opts: DotGridOptions
 ) {
+  const { baseColor, cellCount, dotRatio, variation, seed, phase } = opts;
   const cell = Math.max(w, h) / cellCount;
   const cx = w / 2;
   const cy = h / 2;
   const nx = Math.ceil(w / 2 / cell) + 1; // Zellen von der Mitte bis über den Rand
   const ny = Math.ceil(h / 2 / cell) + 1;
 
-  ctx.fillStyle = colorHex;
-  ctx.strokeStyle = colorHex;
+  ctx.fillStyle = baseColor;
+  ctx.strokeStyle = baseColor;
   ctx.lineWidth = Math.max(1, cell * 0.05);
   ctx.lineCap = "round";
 
-  // Verbindungslinien (durch die Punktzentren) – bleiben statisch.
+  // Verbindungslinien (durch die Punktzentren) – immer in der Basisfarbe.
   const left = cx - nx * cell;
   const right = cx + nx * cell;
   const top = cy - ny * cell;
@@ -110,23 +145,30 @@ function drawDotGrid(
   }
   ctx.stroke();
 
-  // Punkte an jedem Gitterknoten. Bei gesetzter Phase pulsiert jeder Punkt um
-  // seinen Basisradius – mit eigener Phasenverschiebung, Amplitude und (1- oder
-  // 2-facher) Frequenz, sodass sie zufällig größer/kleiner werden. Über eine
-  // ganze Loop (phase 0..1) kehrt jeder Punkt nahtlos zur Ausgangsgröße zurück.
+  // Punkte an jedem Gitterknoten.
   const dotR = cell * dotRatio;
-  const maxR = cell * 1.2; // Punkte nie über die Zelle hinaus wachsen lassen
+  const maxR = cell * 1.2; // Punkte nie zu weit über die Zelle hinaus wachsen lassen
   for (let j = -ny; j <= ny; j++) {
     for (let i = -nx; i <= nx; i++) {
+      // Größe: optional über ein Rauschfeld in zusammenhängenden Flächen
+      // variiert (große/kleine Cluster) …
       let r = dotR;
+      if (variation > 0) {
+        const n = valueNoise(i * SIZE_NOISE_SCALE, j * SIZE_NOISE_SCALE, seed + 991);
+        const noiseMul = 0.1 + n * 1.7; // ~0.1..1.8 (Mittel ~0.95)
+        r = dotR * (1 + variation * (noiseMul - 1));
+      }
+      // … darunter weiterhin das nahtlose Pulsieren bei gesetzter Phase. Über
+      // eine ganze Loop (phase 0..1) kehrt jeder Punkt zur Ausgangsgröße zurück.
       if (phase !== undefined) {
         const offset = dotRand(i, j, seed);
         const amp = DOT_PULSE_MIN + dotRand(i, j, seed + 7) * (DOT_PULSE_MAX - DOT_PULSE_MIN);
         const freq = dotRand(i, j, seed + 13) < 0.5 ? 1 : 2;
-        r = dotR * (1 + amp * Math.sin(TAU * (freq * phase + offset)));
-        r = Math.max(0, Math.min(maxR, r));
+        r *= 1 + amp * Math.sin(TAU * (freq * phase + offset));
       }
+      r = Math.max(0, Math.min(maxR, r));
       if (r <= 0) continue;
+
       ctx.beginPath();
       ctx.arc(cx + i * cell, cy + j * cell, r, 0, TAU);
       ctx.fill();
@@ -171,6 +213,7 @@ export default function Canvas() {
     loopDuration,
     gridResolution,
     dotSize,
+    dotVariation,
     setAreaPosition,
   } = useDesignStore();
 
@@ -194,6 +237,7 @@ export default function Canvas() {
     loopDuration,
     gridResolution,
     dotSize,
+    dotVariation,
   });
   paramsRef.current = {
     columns,
@@ -214,6 +258,7 @@ export default function Canvas() {
     loopDuration,
     gridResolution,
     dotSize,
+    dotVariation,
   };
 
   useEffect(() => {
@@ -351,8 +396,12 @@ export default function Canvas() {
     // Rohbilder (unverändertes schwarzes Silhouetten-SVG) pro Shape-Id.
     const rawImages = new Map<string, HTMLImageElement>();
     const loadingRaw = new Set<string>();
-    // Statische Punktgitter, gecacht pro "shapeId|Farbe|Auflösung|Punktgröße".
+    // Statische Punktgitter, gecacht pro "shapeId|Farbe|Auflösung|…|Seed".
     const tintedCache = new Map<string, p5.Image>();
+    // Da das Punktmuster jetzt vom globalen Seed abhängt (Shuffle ändert die
+    // Textur), würde der Cache sonst über viele Shuffles unbegrenzt wachsen –
+    // beim Seed-Wechsel wird er deshalb geleert.
+    let tintedCacheSeed: number | undefined;
     // Animierte Punktgitter werden pro Frame neu gezeichnet; dieser Cache
     // teilt identische (Shape|Farbe|…) nur innerhalb desselben Frames und wird
     // beim Phasenwechsel geleert, damit nicht pro Frame unbegrenzt Bilder
@@ -408,7 +457,30 @@ export default function Canvas() {
       const h = Math.max(1, Math.round(raw.naturalHeight * scale));
       const cellCount = resolutionToCellCount(gridResolution);
       const dotRatio = dotSizeToRatio(dotSize);
-      const key = `${id}|${colorHex}|${bucket}|${gridResolution}|${dotSize}`;
+
+      // Größen-/Farbvariation, Palette und globaler Seed kommen aus dem Store –
+      // getTintedImage liest paramsRef live (wie der Provider die übrigen Werte
+      // auch). Der globale Seed fließt in den Punkt-Seed ein, damit „Shuffle“
+      // auch die Textur (und nicht nur Platzierung/Farben) verändert.
+      const { seed: globalSeed, dotVariation } = paramsRef.current;
+      const variation = sliderToAmount(dotVariation);
+      const seed = strSeed(`${id}|${colorHex}|${globalSeed}`);
+      const key = `${id}|${colorHex}|${bucket}|${gridResolution}|${dotSize}|${dotVariation}`;
+
+      const buildOptions = (phase?: number): DotGridOptions => ({
+        baseColor: colorHex,
+        cellCount,
+        dotRatio,
+        variation,
+        seed,
+        phase,
+      });
+
+      // Stale Texturen verwerfen, sobald sich der globale Seed ändert.
+      if (tintedCacheSeed !== globalSeed) {
+        tintedCache.clear();
+        tintedCacheSeed = globalSeed;
+      }
 
       // Statisch (keine Animation): dauerhaft cachen, da unverändert.
       if (time === undefined) {
@@ -416,7 +488,7 @@ export default function Canvas() {
         if (cached) return cached;
         const pImg = p.createImage(w, h);
         const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext;
-        drawDotGrid(ctx, raw, w, h, colorHex, cellCount, dotRatio);
+        drawDotGrid(ctx, raw, w, h, buildOptions());
         tintedCache.set(key, pImg);
         return pImg;
       }
@@ -432,7 +504,7 @@ export default function Canvas() {
       if (cachedFrame) return cachedFrame;
       const pImg = p.createImage(w, h);
       const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext;
-      drawDotGrid(ctx, raw, w, h, colorHex, cellCount, dotRatio, time, strSeed(`${id}|${colorHex}`));
+      drawDotGrid(ctx, raw, w, h, buildOptions(time));
       animFrameCache.set(key, pImg);
       return pImg;
     }

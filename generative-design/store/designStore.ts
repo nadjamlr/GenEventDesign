@@ -26,6 +26,7 @@ type DesignStore = {
   loopDuration: number;
   gridResolution: number;
   dotSize: number;
+  dotVariation: number;
   setColumns: (v: number) => void;
   setRows: (v: number) => void;
   setFormat: (v: string) => void;
@@ -36,6 +37,7 @@ type DesignStore = {
   setLoopDuration: (v: number) => void;
   setGridResolution: (v: number) => void;
   setDotSize: (v: number) => void;
+  setDotVariation: (v: number) => void;
   setWidth: (v: number) => void;
   setHeight: (v: number) => void;
   setExportType: (v: ExportType) => void;
@@ -71,6 +73,7 @@ const useDesignStore = create<DesignStore>((set) => ({
   loopDuration: 4,
   gridResolution: 5,
   dotSize: 4,
+  dotVariation: 0,
   setColumns: (v) => set({ columns: v }),
   setRows: (v) => set({ rows: v }),
   setFormat: (v) =>
@@ -88,6 +91,7 @@ const useDesignStore = create<DesignStore>((set) => ({
   setLoopDuration: (v) => set({ loopDuration: v }),
   setGridResolution: (v) => set({ gridResolution: v }),
   setDotSize: (v) => set({ dotSize: v }),
+  setDotVariation: (v) => set({ dotVariation: v }),
   setWidth: (v) => set({ width: v }),
   setHeight: (v) => set({ height: v }),
   setExportType: (v) => set({ exportType: v }),
