@@ -5,11 +5,12 @@ import { useState, useRef } from "react";
 type SliderProps = {
   label?: string;
   range?: number;
+  defaultValue?: number;
   onChange?: (value: number) => void;
 };
 
-export default function Slider({ range = 5, onChange }: SliderProps) {
-  const [value, setValue] = useState(0);
+export default function Slider({ range = 5, defaultValue = 0, onChange }: SliderProps) {
+  const [value, setValue] = useState(defaultValue);
   const trackRef = useRef<HTMLDivElement>(null);
 
   function getValueFromX(clientX: number): number {

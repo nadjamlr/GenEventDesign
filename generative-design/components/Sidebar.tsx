@@ -85,7 +85,10 @@ export default function Sidebar() {
     setAnimate,
     loopDuration,
     setLoopDuration,
-    setPixelate,
+    gridResolution,
+    dotSize,
+    setGridResolution,
+    setDotSize,
   } = useDesignStore();
 
   const [hexInput, setHexInput] = useState("");
@@ -325,8 +328,11 @@ export default function Sidebar() {
               />
             ))}
           </div>
-          <RulerItem label="Pixelate">
-            <Slider range={10} onChange={setPixelate} />
+          <RulerItem label="Grid">
+            <Slider range={10} defaultValue={gridResolution} onChange={setGridResolution} />
+          </RulerItem>
+          <RulerItem label="Dots">
+            <Slider range={10} defaultValue={dotSize} onChange={setDotSize} />
           </RulerItem>
         </RulerSection>
 

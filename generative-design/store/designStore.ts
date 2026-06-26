@@ -24,7 +24,8 @@ type DesignStore = {
   logoMode: LogoMode;
   animate: boolean;
   loopDuration: number;
-  pixelate: number;
+  gridResolution: number;
+  dotSize: number;
   setColumns: (v: number) => void;
   setRows: (v: number) => void;
   setFormat: (v: string) => void;
@@ -33,7 +34,8 @@ type DesignStore = {
   setLogoMode: (v: LogoMode) => void;
   setAnimate: (v: boolean) => void;
   setLoopDuration: (v: number) => void;
-  setPixelate: (v: number) => void;
+  setGridResolution: (v: number) => void;
+  setDotSize: (v: number) => void;
   setWidth: (v: number) => void;
   setHeight: (v: number) => void;
   setExportType: (v: ExportType) => void;
@@ -67,7 +69,8 @@ const useDesignStore = create<DesignStore>((set) => ({
   logoMode: "random",
   animate: false,
   loopDuration: 4,
-  pixelate: 0,
+  gridResolution: 5,
+  dotSize: 4,
   setColumns: (v) => set({ columns: v }),
   setRows: (v) => set({ rows: v }),
   setFormat: (v) =>
@@ -83,7 +86,8 @@ const useDesignStore = create<DesignStore>((set) => ({
   setLogoMode: (v) => set({ logoMode: v }),
   setAnimate: (v) => set({ animate: v }),
   setLoopDuration: (v) => set({ loopDuration: v }),
-  setPixelate: (v) => set({ pixelate: v }),
+  setGridResolution: (v) => set({ gridResolution: v }),
+  setDotSize: (v) => set({ dotSize: v }),
   setWidth: (v) => set({ width: v }),
   setHeight: (v) => set({ height: v }),
   setExportType: (v) => set({ exportType: v }),

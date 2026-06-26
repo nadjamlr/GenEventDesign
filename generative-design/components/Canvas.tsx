@@ -19,127 +19,84 @@ import { TEXT_STYLES } from "@/lib/textStyles";
 
 const STACK_GAP_RATIO = 0.04; // Abstand zwischen Vorder- und Rückseite, relativ zur Seitenhöhe
 const AREA_DRAG_MARGIN_RATIO = 0.02; // Mindestabstand zum Rahmenrand beim Drag&Drop von Areas
-const SHAPE_GRAIN_OPACITY = 0.28; // Stärke des Korns in den Shapes
 
-// Feines Schwarz/Weiß-Korn, das per "source-atop" nur auf bereits gefüllte
-// (deckende) Pixel zeichnet – bleibt also exakt auf die Shape-Silhouette
-// begrenzt, statt auch den transparenten Rand zu betreffen.
-function applyGrain(ctx: CanvasRenderingContext2D, w: number, h: number) {
-  const grain = ctx.createImageData(w, h);
-  const data = grain.data;
-  for (let i = 0; i < data.length; i += 4) {
-    const v = Math.random() < 0.5 ? 0 : 255;
-    data[i] = v;
-    data[i + 1] = v;
-    data[i + 2] = v;
-    data[i + 3] = Math.random() * 255 * SHAPE_GRAIN_OPACITY;
-  }
-  const grainCanvas = document.createElement("canvas");
-  grainCanvas.width = w;
-  grainCanvas.height = h;
-  grainCanvas.getContext("2d")!.putImageData(grain, 0, 0);
-
-  ctx.globalCompositeOperation = "source-atop";
-  ctx.drawImage(grainCanvas, 0, 0);
-  ctx.globalCompositeOperation = "source-over";
+// Auflösungs-Slider (0..10) -> Anzahl der Rasterzellen über die längere
+// Shape-Seite. Höher = stärker "hineingezoomt" (größere Zellen, weniger
+// Punkte); niedriger = feines Raster mit vielen kleinen Punkten.
+const GRID_MIN_CELLS = 4;
+const GRID_MAX_CELLS = 28;
+function resolutionToCellCount(resolution: number): number {
+  const t = Math.max(0, Math.min(1, resolution / 10));
+  return Math.round(GRID_MAX_CELLS - t * (GRID_MAX_CELLS - GRID_MIN_CELLS));
 }
 
-function hashStr(str: string): number {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) {
-    h = (h << 5) - h + str.charCodeAt(i);
-    h |= 0;
-  }
-  return h >>> 0;
+// Punktgrößen-Slider (0..10) -> Punktradius relativ zur Zellengröße. Bei 0
+// kleine Punkte mit viel Luft, bei 10 fast aneinanderstoßende Punkte.
+const DOT_MIN_RATIO = 0.08;
+const DOT_MAX_RATIO = 0.45;
+function dotSizeToRatio(dotSize: number): number {
+  const t = Math.max(0, Math.min(1, dotSize / 10));
+  return DOT_MIN_RATIO + t * (DOT_MAX_RATIO - DOT_MIN_RATIO);
 }
 
-// Deterministisches Pseudo-Zufall pro Rasterzelle (statt echtem Random), damit
-// derselbe Shape/Farbe-Cache-Eintrag bei erneuter Berechnung exakt gleich
-// aussieht und sich Punktzentren/-radien trotzdem organisch statt streng
-// gitterförmig anfühlen.
-function cellNoise(ix: number, iy: number, seed: number): number {
-  let h = (ix * 374761393 + iy * 668265263 + seed * 1013904223) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177) | 0;
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
-
-// Separierbares Box-Blur (horizontal + vertikal, gleitendes Fenster) – dient
-// hier nicht der Optik selbst, sondern liefert ein grobes Distanzfeld: Pixel
-// tief im Inneren der Silhouette bleiben nahe 1, Pixel nahe am Rand fallen
-// Richtung 0 ab.
-function boxBlur(
-  src: Float32Array<ArrayBuffer>,
+// Zeichnet ein regelmäßiges Gitter aus Punkten, die durch dünne Linien
+// verbunden sind (Lattice), und beschneidet es anschließend per
+// "destination-in" auf die Shape-Silhouette `raw` – der Rand des Gitters
+// erhält dadurch exakt die Form der Shape. Das Gitter ist auf die Bildmitte
+// zentriert und reicht über alle Ränder hinaus, damit die Silhouette überall
+// gefüllt ist.
+function drawDotGrid(
+  ctx: CanvasRenderingContext2D,
+  raw: HTMLImageElement,
   w: number,
   h: number,
-  radius: number
-): Float32Array<ArrayBuffer> {
-  const tmp = new Float32Array(w * h);
-  const out = new Float32Array(w * h);
-  for (let y = 0; y < h; y++) {
-    const row = y * w;
-    let sum = 0;
-    for (let x = -radius; x <= radius; x++) sum += src[row + Math.min(w - 1, Math.max(0, x))];
-    for (let x = 0; x < w; x++) {
-      tmp[row + x] = sum / (radius * 2 + 1);
-      sum -= src[row + Math.min(w - 1, Math.max(0, x - radius))];
-      sum += src[row + Math.min(w - 1, Math.max(0, x + radius + 1))];
+  colorHex: string,
+  cellCount: number,
+  dotRatio: number
+) {
+  const cell = Math.max(w, h) / cellCount;
+  const cx = w / 2;
+  const cy = h / 2;
+  const nx = Math.ceil(w / 2 / cell) + 1; // Zellen von der Mitte bis über den Rand
+  const ny = Math.ceil(h / 2 / cell) + 1;
+
+  ctx.fillStyle = colorHex;
+  ctx.strokeStyle = colorHex;
+  ctx.lineWidth = Math.max(1, cell * 0.05);
+  ctx.lineCap = "round";
+
+  // Verbindungslinien (durch die Punktzentren).
+  const left = cx - nx * cell;
+  const right = cx + nx * cell;
+  const top = cy - ny * cell;
+  const bottom = cy + ny * cell;
+  ctx.beginPath();
+  for (let i = -nx; i <= nx; i++) {
+    const x = cx + i * cell;
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, bottom);
+  }
+  for (let j = -ny; j <= ny; j++) {
+    const y = cy + j * cell;
+    ctx.moveTo(left, y);
+    ctx.lineTo(right, y);
+  }
+  ctx.stroke();
+
+  // Punkte an jedem Gitterknoten.
+  const dotR = cell * dotRatio;
+  for (let j = -ny; j <= ny; j++) {
+    for (let i = -nx; i <= nx; i++) {
+      ctx.beginPath();
+      ctx.arc(cx + i * cell, cy + j * cell, dotR, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
-  for (let x = 0; x < w; x++) {
-    let sum = 0;
-    for (let y = -radius; y <= radius; y++) sum += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
-    for (let y = 0; y < h; y++) {
-      out[y * w + x] = sum / (radius * 2 + 1);
-      sum -= tmp[Math.min(h - 1, Math.max(0, y - radius)) * w + x];
-      sum += tmp[Math.min(h - 1, Math.max(0, y + radius + 1)) * w + x];
-    }
-  }
-  return out;
-}
 
-// Tonaler Halbton: löst die Silhouette in ein Punktraster auf, dessen
-// Punktgröße dem (über Box-Blur angenäherten) Abstand zum Rand folgt – große,
-// dichte Punkte im Zentrum, auslaufend zu nichts am Rand. `amount` (0..1)
-// blendet zwischen unverändertem Stand (0) und vollem Raster (1).
-function applyHalftone(ctx: CanvasRenderingContext2D, w: number, h: number, amount: number, seed: number) {
-  if (amount <= 0) return;
-  const img = ctx.getImageData(0, 0, w, h);
-  const alpha = img.data;
-
-  let density = new Float32Array(w * h);
-  for (let i = 0; i < density.length; i++) density[i] = alpha[i * 4 + 3] / 255;
-  const radius = Math.max(1, Math.round(Math.min(w, h) * 0.05));
-  density = boxBlur(density, w, h, radius);
-  density = boxBlur(density, w, h, radius);
-  density = boxBlur(density, w, h, radius);
-
-  const cell = Math.max(3, Math.round(Math.min(w, h) / 40));
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      const a = alpha[i * 4 + 3];
-      if (a === 0) continue;
-
-      const ix = Math.floor(x / cell);
-      const iy = Math.floor(y / cell);
-      const jitterX = (cellNoise(ix, iy, seed) - 0.5) * cell * 0.5;
-      const jitterY = (cellNoise(ix, iy, seed + 1) - 0.5) * cell * 0.5;
-      const ccx = Math.min(w - 1, Math.max(0, Math.round((ix + 0.5) * cell + jitterX)));
-      const ccy = Math.min(h - 1, Math.max(0, Math.round((iy + 0.5) * cell + jitterY)));
-
-      const d = density[ccy * w + ccx];
-      const radiusJitter = 0.85 + cellNoise(ix, iy, seed + 2) * 0.3;
-      const dotR = (cell / 2) * Math.sqrt(Math.max(0, d)) * radiusJitter;
-
-      const dx = x - ccx;
-      const dy = y - ccy;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const coverage = Math.max(0, Math.min(1, dotR - dist + 0.5));
-
-      alpha[i * 4 + 3] = Math.round(a * (1 - amount + amount * coverage));
-    }
-  }
-  ctx.putImageData(img, 0, 0);
+  // Gitter auf die Shape-Silhouette beschneiden.
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.drawImage(raw, 0, 0, w, h);
+  ctx.globalCompositeOperation = "source-over";
 }
 
 // Bestmöglicher unterstützter WebM-Codec für die Video-Aufnahme.
@@ -172,7 +129,8 @@ export default function Canvas() {
     logoMode,
     animate,
     loopDuration,
-    pixelate,
+    gridResolution,
+    dotSize,
     setAreaPosition,
   } = useDesignStore();
 
@@ -194,7 +152,8 @@ export default function Canvas() {
     logoMode,
     animate,
     loopDuration,
-    pixelate,
+    gridResolution,
+    dotSize,
   });
   paramsRef.current = {
     columns,
@@ -213,7 +172,8 @@ export default function Canvas() {
     logoMode,
     animate,
     loopDuration,
-    pixelate,
+    gridResolution,
+    dotSize,
   };
 
   useEffect(() => {
@@ -385,7 +345,8 @@ export default function Canvas() {
       id: string,
       colorHex: string,
       targetSize = 512,
-      pixelateAmount = 0
+      gridResolution = 5,
+      dotSize = 4
     ): p5.Image | undefined {
       const raw = rawImages.get(id);
       if (!raw) return undefined;
@@ -399,21 +360,16 @@ export default function Canvas() {
       const w = Math.max(1, Math.round(raw.naturalWidth * scale));
       const h = Math.max(1, Math.round(raw.naturalHeight * scale));
 
-      const key = `${id}|${colorHex}|${bucket}|${pixelateAmount}`;
+      const key = `${id}|${colorHex}|${bucket}|${gridResolution}|${dotSize}`;
       const cached = tintedCache.get(key);
       if (cached) return cached;
 
-      // SVG wird beim drawImage in der Zielgröße neu (vektorbasiert) gerastert
-      // – dadurch bleibt es bei jeder Größe scharf.
+      // Shape als Punktgitter rendern: Punkte + Verbindungslinien, auf die
+      // SVG-Silhouette (in Zielgröße neu gerastert, daher scharf) beschnitten.
       const pImg = p.createImage(w, h);
       const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D })
         .drawingContext;
-      ctx.drawImage(raw, 0, 0, w, h);
-      ctx.globalCompositeOperation = "source-in";
-      ctx.fillStyle = colorHex;
-      ctx.fillRect(0, 0, w, h);
-      applyHalftone(ctx, w, h, pixelateAmount, hashStr(id));
-      applyGrain(ctx, w, h);
+      drawDotGrid(ctx, raw, w, h, colorHex, resolutionToCellCount(gridResolution), dotSizeToRatio(dotSize));
 
       tintedCache.set(key, pImg);
       return pImg;
@@ -651,7 +607,7 @@ export default function Canvas() {
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
         getImage: (id, colorHex, targetSize) =>
-          getTintedImage(p, id, colorHex, targetSize, paramsRef.current.pixelate / 10),
+          getTintedImage(p, id, colorHex, targetSize, paramsRef.current.gridResolution, paramsRef.current.dotSize),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(p, area, w, h),
@@ -751,13 +707,14 @@ export default function Canvas() {
         side,
         logoEnabled,
         logoMode,
-        pixelate,
+        gridResolution,
+        dotSize,
       } = paramsRef.current;
       const gfx = instance.createGraphics(width, height);
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
         getImage: (id, colorHex, targetSize) =>
-          getTintedImage(instance, id, colorHex, targetSize, pixelate / 10),
+          getTintedImage(instance, id, colorHex, targetSize, gridResolution, dotSize),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
@@ -807,7 +764,7 @@ export default function Canvas() {
       const shapeImages: ShapeImageProvider = {
         isReady: (id) => rawImages.has(id),
         getImage: (id, colorHex, targetSize) =>
-          getTintedImage(instance, id, colorHex, targetSize, params.pixelate / 10),
+          getTintedImage(instance, id, colorHex, targetSize, params.gridResolution, params.dotSize),
       };
       const areaImagesLocal: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
