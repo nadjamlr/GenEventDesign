@@ -58,7 +58,7 @@ function resolutionToCellCount(resolution: number): number {
 // Punktgrößen-Slider (0..10) -> Punktradius relativ zur Zellengröße. Bei 0
 // kleine Punkte mit viel Luft, bei 10 fast aneinanderstoßende Punkte.
 const DOT_MIN_RATIO = 0.08;
-const DOT_MAX_RATIO = 0.45;
+const DOT_MAX_RATIO = 0.9;
 function dotSizeToRatio(dotSize: number): number {
   const t = Math.max(0, Math.min(1, dotSize / 10));
   return DOT_MIN_RATIO + t * (DOT_MAX_RATIO - DOT_MIN_RATIO);
@@ -115,7 +115,7 @@ function drawDotGrid(
   // 2-facher) Frequenz, sodass sie zufällig größer/kleiner werden. Über eine
   // ganze Loop (phase 0..1) kehrt jeder Punkt nahtlos zur Ausgangsgröße zurück.
   const dotR = cell * dotRatio;
-  const maxR = cell * 0.5; // Punkte nie über die Zelle hinaus wachsen lassen
+  const maxR = cell * 1.2; // Punkte nie über die Zelle hinaus wachsen lassen
   for (let j = -ny; j <= ny; j++) {
     for (let i = -nx; i <= nx; i++) {
       let r = dotR;
