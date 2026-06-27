@@ -181,6 +181,35 @@ function drawDotGrid(
   ctx.globalCompositeOperation = "source-over";
 }
 
+// Zeichnet nur das ausgewählte Logo/Icon (in Schwarz, auf das weiße Shirt)
+// zentriert in die übergebene Region – für "logo"-Mockup-Panels.
+function drawLogoOnly(
+  target: p5,
+  drawParams: Parameters<typeof drawGrid>[1],
+  rx: number,
+  ry: number,
+  rw: number,
+  rh: number
+) {
+  const { logoImages, logoMode = "random", logoEnabled = true, seed = 0 } = drawParams;
+  if (!logoEnabled || !logoImages) return;
+  const variant = logoMode === "random" ? (Math.abs(seed) % 2 === 0 ? "logo" : "icon") : logoMode;
+  const vi = logoImages[variant];
+  const img = vi?.black ?? vi?.white;
+  if (!img) return;
+  const fit = Math.min(rw / img.width, rh / img.height);
+  const dw = img.width * fit;
+  const dh = img.height * fit;
+  target.imageMode(target.CORNER);
+  target.image(
+    img,
+    Math.round(rx + (rw - dw) / 2),
+    Math.round(ry + (rh - dh) / 2),
+    Math.round(dw),
+    Math.round(dh)
+  );
+}
+
 // Bestmöglicher unterstützter WebM-Codec für die Video-Aufnahme.
 function pickVideoMime(): string {
   const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
@@ -685,78 +714,105 @@ export default function Canvas() {
       cached: boolean
     ) {
       const fmt = FORMAT_SIZES[(drawParams.format as string) ?? ""];
-      if (!fmt?.mockupSrc) {
+      const panels = fmt?.mockups;
+      if (!panels || panels.length === 0) {
         drawGrid(target, drawParams);
         return;
       }
-      const region = fmt.designRegion ?? { x: 0.3, y: 0.25, w: 0.4, h: 0.4 };
-      const rw = Math.max(1, Math.round(w * region.w));
-      const rh = Math.max(1, Math.round(h * region.h));
 
-      let dg: p5.Graphics;
-      if (cached) {
-        if (!designGfx || designGfx.width !== rw || designGfx.height !== rh) {
-          designGfx?.remove();
-          designGfx = p5i.createGraphics(rw, rh);
-        }
-        dg = designGfx;
-      } else {
-        dg = p5i.createGraphics(rw, rh);
-      }
-
-      drawGrid(dg, drawParams);
-
-      ensureMockupLoaded(p5i, fmt.mockupSrc);
-      const shirt = mockupImages.get(fmt.mockupSrc);
+      // Weißer Untergrund + jedes Shirt-Foto in seine (gleich breite) Spalte.
       target.imageMode(target.CORNER);
-      if (shirt) target.image(shirt, 0, 0, w, h);
-      else target.background(255);
+      target.background(255);
+      const colW = w / panels.length;
 
-      // Auf die Mockup-Silhouette maskieren (siehe lib/formats.ts maskSrc):
-      // das Design soll die Form des Produktfotos annehmen (z.B. T-Shirt-
-      // Umriss inkl. Kragenrundung), statt als hartes Rechteck drüberzuliegen.
-      let toComposite: p5.Graphics | p5.Image = dg;
-      if (fmt.maskSrc) {
-        ensureMockupLoaded(p5i, fmt.maskSrc);
-        const maskImg = mockupImages.get(fmt.maskSrc);
-        if (maskImg) {
-          let mg: p5.Graphics;
-          if (cached) {
-            if (!maskedGfx || maskedGfx.width !== rw || maskedGfx.height !== rh) {
-              maskedGfx?.remove();
-              maskedGfx = p5i.createGraphics(rw, rh);
-            }
-            mg = maskedGfx;
-          } else {
-            mg = p5i.createGraphics(rw, rh);
-          }
-          mg.clear();
-          mg.imageMode(mg.CORNER);
-          mg.image(dg, 0, 0, rw, rh);
-          const ctx = (mg as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext;
-          ctx.globalCompositeOperation = "destination-in";
-          mg.image(
-            maskImg,
-            0,
-            0,
-            rw,
-            rh,
-            region.x * maskImg.width,
-            region.y * maskImg.height,
-            region.w * maskImg.width,
-            region.h * maskImg.height
+      panels.forEach((panel, i) => {
+        ensureMockupLoaded(p5i, panel.src);
+        const shirt = mockupImages.get(panel.src);
+        if (shirt) {
+          // Foto mittig in seiner Spalte, optional etwas vergrößert (imageScale).
+          const s = panel.imageScale ?? 1;
+          const dw = colW * s;
+          const dh = h * s;
+          const colCx = i * colW + colW / 2;
+          target.image(
+            shirt,
+            Math.round(colCx - dw / 2),
+            Math.round(h / 2 - dh / 2),
+            Math.round(dw),
+            Math.round(dh)
           );
-          ctx.globalCompositeOperation = "source-over";
-          toComposite = mg;
         }
-      }
 
-      target.image(toComposite, Math.round(w * region.x), Math.round(h * region.y), rw, rh);
+        const rx = Math.round(w * panel.region.x);
+        const ry = Math.round(h * panel.region.y);
+        const rw = Math.max(1, Math.round(w * panel.region.w));
+        const rh = Math.max(1, Math.round(h * panel.region.h));
 
-      if (!cached) {
-        dg.remove();
-        if (toComposite !== dg) (toComposite as p5.Graphics).remove();
-      }
+        // "logo": nur das ausgewählte Logo/Icon in die Region.
+        if (panel.content === "logo") {
+          drawLogoOnly(target, drawParams, rx, ry, rw, rh);
+          return;
+        }
+
+        // "full": komplette Komposition (Shapes/Animation/Logo) in ein
+        // Graphics rendern, optional auf eine Silhouette maskieren, dann in die
+        // Region komponieren. Das gecachte designGfx/maskedGfx wird vom
+        // (einzigen) Full-Panel genutzt.
+        let dg: p5.Graphics;
+        if (cached) {
+          if (!designGfx || designGfx.width !== rw || designGfx.height !== rh) {
+            designGfx?.remove();
+            designGfx = p5i.createGraphics(rw, rh);
+          }
+          dg = designGfx;
+        } else {
+          dg = p5i.createGraphics(rw, rh);
+        }
+        drawGrid(dg, drawParams);
+
+        let toComposite: p5.Graphics | p5.Image = dg;
+        if (panel.maskSrc) {
+          ensureMockupLoaded(p5i, panel.maskSrc);
+          const maskImg = mockupImages.get(panel.maskSrc);
+          if (maskImg) {
+            let mg: p5.Graphics;
+            if (cached) {
+              if (!maskedGfx || maskedGfx.width !== rw || maskedGfx.height !== rh) {
+                maskedGfx?.remove();
+                maskedGfx = p5i.createGraphics(rw, rh);
+              }
+              mg = maskedGfx;
+            } else {
+              mg = p5i.createGraphics(rw, rh);
+            }
+            mg.clear();
+            mg.imageMode(mg.CORNER);
+            mg.image(dg, 0, 0, rw, rh);
+            const ctx = (mg as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext;
+            ctx.globalCompositeOperation = "destination-in";
+            mg.image(
+              maskImg,
+              0,
+              0,
+              rw,
+              rh,
+              panel.region.x * maskImg.width,
+              panel.region.y * maskImg.height,
+              panel.region.w * maskImg.width,
+              panel.region.h * maskImg.height
+            );
+            ctx.globalCompositeOperation = "source-over";
+            toComposite = mg;
+          }
+        }
+
+        target.image(toComposite, rx, ry, rw, rh);
+
+        if (!cached) {
+          dg.remove();
+          if (toComposite !== dg) (toComposite as p5.Graphics).remove();
+        }
+      });
     }
 
     // Google Font (siehe lib/fonts.ts) wird pro benötigtem Weight einzeln
