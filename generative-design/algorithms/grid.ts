@@ -489,12 +489,52 @@ export function drawGrid(p5: p5Types, params: Params) {
     logoBox = { x, y, w: logoW, h: logoH };
   }
 
-  const exclusionRects = [...staticExclusionRects, ...(logoBox ? [logoBox] : [])];
-
   // Spalten/Zeilen steuern die Gesamtdichte; baseUnit ist die typische
   // Elementgröße, abgeleitet aus Fläche / Anzahl.
   const count = Math.max(1, columns * rows);
   const baseUnit = Math.sqrt((innerW * innerH) / count);
+
+  // Anordnung schon hier bestimmen (nur seedabhängig), damit die Logo-Sperrzone
+  // um die maximale Bewegungsweite DIESER Anordnung vergrößert werden kann – so
+  // wandert auch während der Animation keine Shape über/unter das Logo.
+  const ARRANGEMENTS = [
+    "scatter",
+    "grid",
+    "rings",
+    "diagonal",
+    "wave",
+    "border",
+    "packing",
+  ] as const;
+  const arrangement = ARRANGEMENTS[Math.abs(hashString(`arrangement|${seedParam}`)) % ARRANGEMENTS.length];
+
+  // Bewegungspuffer entsprechend der animierten Verschiebung in motionFor
+  // (scatter/border/rings bewegen sich nicht -> 0).
+  const waveRowsN = Math.max(1, Math.round(Math.sqrt(count)));
+  const logoMotionMargin =
+    arrangement === "wave"
+      ? (innerH / waveRowsN) * 0.6
+      : arrangement === "diagonal"
+        ? baseUnit * 0.45
+        : arrangement === "grid"
+          ? baseUnit * 0.25
+          : arrangement === "packing"
+            ? baseUnit * 0.1
+            : 0;
+
+  // Das Logo wird ohnehin zuletzt (ganz oben) gezeichnet, ist also nie verdeckt;
+  // die um den Bewegungspuffer vergrößerte Sperrzone hält die Shapes zusätzlich
+  // auf Abstand, damit das Logo auch animiert frei steht. Die echte Zeichen-Box
+  // logoBox bleibt unverändert.
+  const logoExclusion = logoBox
+    ? {
+        x: logoBox.x - logoMotionMargin,
+        y: logoBox.y - logoMotionMargin,
+        w: logoBox.w + logoMotionMargin * 2,
+        h: logoBox.h + logoMotionMargin * 2,
+      }
+    : undefined;
+  const exclusionRects = [...staticExclusionRects, ...(logoExclusion ? [logoExclusion] : [])];
 
   // Pro Shuffle leicht variierende Meta-Parameter, damit dieselbe Anordnung
   // bei jedem Shuffle anders wirkt. Seitenunabhängig (sharedRng), damit Vorder-
@@ -824,19 +864,8 @@ export function drawGrid(p5: p5Types, params: Params) {
       }));
   }
 
-  // Anordnung pro Shuffle auswürfeln: seedabhängig und seitenunabhängig (nur
-  // seedParam), damit jede Generierung zufällig zwischen den Stilen wechselt
-  // und Vorder-/Rückseite dieselbe Anordnung teilen.
-  const ARRANGEMENTS = [
-    "scatter",
-    "grid",
-    "rings",
-    "diagonal",
-    "wave",
-    "border",
-    "packing",
-  ] as const;
-  const arrangement = ARRANGEMENTS[Math.abs(hashString(`arrangement|${seedParam}`)) % ARRANGEMENTS.length];
+  // Anordnung wurde oben schon bestimmt (für die Logo-Sperrzone); hier nur noch
+  // die passende Platzierungs-Funktion auswählen und ausführen.
   const placers: Record<(typeof ARRANGEMENTS)[number], () => Instance[]> = {
     scatter: placeScatter,
     grid: placeGrid,
