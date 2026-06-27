@@ -864,9 +864,6 @@ export function drawGrid(p5: p5Types, params: Params) {
     if (!animate) return { dx: 0, dy: 0, dRot: 0, scale: 1 };
     const off = fieldHash(inst.idx + 1, 7, sharedSeed) * TAU; // desynchronisiert pro Element
     switch (arrangement) {
-      case "rings":
-        // Keine Eigenbewegung der Shapes – nur das Punkt-Pulsieren im Gitter bleibt.
-        return { dx: 0, dy: 0, dRot: 0, scale: 1 };
       case "wave": {
         // Wandernde Welle: die Wellenphase läuft über die Loop um TAU weiter,
         // sodass die Kämme seitlich durchwandern. Jedes Element folgt der neuen
@@ -889,13 +886,9 @@ export function drawGrid(p5: p5Types, params: Params) {
         // Atmen – sanftes Größen-Pulsieren des ganzen Elements.
         return { dx: 0, dy: 0, dRot: 0, scale: 1 + Math.sin(TAU * phase + off) * 0.06 };
       default:
-        // scatter/border: freies, desynchronisiertes Driften in kleinen Kreisen.
-        return {
-          dx: Math.sin(TAU * phase + off) * driftAmp,
-          dy: Math.cos(TAU * phase + off) * driftAmp,
-          dRot: 0,
-          scale: 1,
-        };
+        // scatter/border/rings: keine Eigenbewegung der Shapes – nur das
+        // Punkt-Pulsieren im Gitter bleibt.
+        return { dx: 0, dy: 0, dRot: 0, scale: 1 };
     }
   };
 
