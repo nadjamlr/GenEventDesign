@@ -942,6 +942,7 @@ export default function Canvas() {
         rows,
         width,
         height,
+        cornerRadius,
         selectedShapes,
         selectedColors,
         seed,
@@ -989,6 +990,20 @@ export default function Canvas() {
         },
         false
       );
+      // Formate mit abgerundeten Ecken (z.B. Skateboard) auf ihre Silhouette
+      // beschneiden, damit der Export tatsächlich die Form hat (transparente
+      // Ecken) statt eines Rechtecks. In der Vorschau macht das die CSS-
+      // border-radius; die exportierten Pixel brauchen den echten Zuschnitt.
+      if (cornerRadius > 0) {
+        const ctx = (gfx as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext;
+        ctx.save();
+        ctx.globalCompositeOperation = "destination-in";
+        ctx.beginPath();
+        ctx.roundRect(0, 0, width, height, cornerRadius);
+        ctx.fillStyle = "#fff";
+        ctx.fill();
+        ctx.restore();
+      }
       const dataUrl = (gfx.elt as HTMLCanvasElement).toDataURL("image/png");
       gfx.remove();
       return { dataUrl, width, height };
