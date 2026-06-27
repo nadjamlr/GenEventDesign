@@ -63,6 +63,12 @@ type Params = {
    * Bewegung berechnet – die Ausgabe bleibt exakt wie bisher.
    */
   time?: number;
+  /**
+   * Verstrichene Echtzeit in Sekunden – für kontinuierliche, von der Loop-Länge
+   * unabhängige Bewegungen (aktuell die volle Ring-Rotation). Loop-gebundene
+   * Bewegungen nutzen weiterhin `time`/phase.
+   */
+  elapsed?: number;
 };
 
 const BLEED_RATIO = 0.18; // wie weit Elemente über den Rand hinausragen dürfen
@@ -75,6 +81,10 @@ const MIN_GAP_RATIO = 0.8; // Mindestabstand zwischen Mittelpunkten, relativ zur
 const MAX_PLACEMENT_ATTEMPTS = 24; // Versuche pro Element, eine Position mit genug Abstand zu Nachbarn zu finden
 
 const TAU = Math.PI * 2;
+// Sekunden pro voller Ring-Umdrehung. Höher = langsamer. Bewusst von der
+// Loop-Länge entkoppelt (über `elapsed`), damit die Rotation langsam sein kann,
+// ohne pro Loop eine ganze Umdrehung machen zu müssen.
+export const RING_ROTATION_SECONDS = 12;
 
 function hashString(str: string): number {
   let hash = 0;
@@ -151,6 +161,11 @@ type Instance = {
   colorHex: string;
   /** Strukturelle Rotation dieser Shape; ohne Angabe greift das Rotations-Rauschfeld. */
   baseRot?: number;
+  /** Nur "wave": Wellenphase, -amplitude und Steigungsfaktor dieses Elements –
+   *  damit die Animation die wandernde Welle exakt nachrechnen kann. */
+  waveTheta?: number;
+  waveAmp?: number;
+  waveSlopeK?: number;
 };
 
 // Mittelt die Helligkeit einiger Stichproben-Pixel in einem Bereich, damit
@@ -252,6 +267,7 @@ export function drawGrid(p5: p5Types, params: Params) {
     side,
     fontProvider,
     time,
+    elapsed = 0,
   } = params;
 
   // Animation: phase in [0,1), bei time=undefined keine Bewegung.
@@ -688,6 +704,7 @@ export function drawGrid(p5: p5Types, params: Params) {
     const amp = (innerH / rowsN) * 0.6;
     const freq = 1 + Math.floor(rng() * 2);
     const phase0 = rng() * TAU;
+    const slopeK = (amp * TAU * freq) / innerW; // Steigung = cos(theta) * slopeK
     const result: Instance[] = [];
     let i = 0;
     for (let r = 0; r < rowsN; r++) {
@@ -700,13 +717,16 @@ export function drawGrid(p5: p5Types, params: Params) {
         const size = baseUnit * (0.8 + rng() * 0.4);
         if (!inBleed(cx, cy)) continue;
         if (intersectsExclusion(cx, cy, size)) continue;
-        const slope = (Math.cos(theta) * amp * TAU * freq) / innerW;
+        const slope = Math.cos(theta) * slopeK;
         result.push({
           idx: i++,
           cx,
           cy,
           size,
           baseRot: Math.round(Math.atan(slope) / (Math.PI / 4)) * (Math.PI / 4),
+          waveTheta: theta,
+          waveAmp: amp,
+          waveSlopeK: slopeK,
           shapeId: pickShape(),
           colorHex: pickColor(),
         });
@@ -844,24 +864,84 @@ export function drawGrid(p5: p5Types, params: Params) {
   // das sorgt für Tiefe in den verbliebenen Überlappungen statt zufälligem
   // Gewusel.
 
+  // Zusätzlich zum Punkt-Pulsieren bewegen sich die Shapes selbst – je nach
+  // Anordnung unterschiedlich. Alle Bewegungen sind über eine Loop (phase 0..1)
+  // nahtlos (sin/cos bzw. volle Umdrehung), damit der Video-Export ruckelfrei
+  // schließt. Seed seitenunabhängig (sharedSeed), damit Vorder-/Rückseite
+  // synchron laufen.
+  const moveCcx = innerX + innerW / 2;
+  const moveCcy = innerY + innerH / 2;
+  const driftAmp = baseUnit * 0.45;
+  // Volle, aber langsame Ring-Rotation: Winkel aus der Echtzeit (elapsed),
+  // nicht aus der Loop-Phase – sonst müsste eine volle Umdrehung in eine Loop
+  // passen und wäre zwangsläufig schnell. TAU * elapsed/Periode läuft beim
+  // Loop-Übergang nahtlos weiter (eine volle Umdrehung sieht identisch aus).
+  const ringAngle = (elapsed / RING_ROTATION_SECONDS) * TAU;
+  type Motion = { dx: number; dy: number; dRot: number; scale: number };
+  const motionFor = (inst: Instance): Motion => {
+    if (!animate) return { dx: 0, dy: 0, dRot: 0, scale: 1 };
+    const off = fieldHash(inst.idx + 1, 7, sharedSeed) * TAU; // desynchronisiert pro Element
+    switch (arrangement) {
+      case "rings": {
+        // Volle, langsame Umdrehung um die Mitte; die Rotation folgt mit.
+        const ang = ringAngle;
+        const rx = inst.cx - moveCcx;
+        const ry = inst.cy - moveCcy;
+        const ca = Math.cos(ang);
+        const sa = Math.sin(ang);
+        return { dx: rx * ca - ry * sa - rx, dy: rx * sa + ry * ca - ry, dRot: ang, scale: 1 };
+      }
+      case "wave": {
+        // Wandernde Welle: die Wellenphase läuft über die Loop um TAU weiter,
+        // sodass die Kämme seitlich durchwandern. Jedes Element folgt der neuen
+        // Höhe an seiner x-Position und kippt mit der lokalen Steigung mit.
+        const tt = inst.waveTheta! + TAU * phase;
+        const dy = inst.waveAmp! * (Math.sin(tt) - Math.sin(inst.waveTheta!));
+        const slopeNow = Math.cos(tt) * inst.waveSlopeK!;
+        const dRot = Math.atan(slopeNow) - (inst.baseRot ?? 0);
+        return { dx: 0, dy, dRot, scale: 1 };
+      }
+      case "diagonal": {
+        // Hin und her entlang der 45°-Richtung.
+        const d = Math.sin(TAU * phase + off) * driftAmp;
+        return { dx: d * Math.SQRT1_2, dy: d * Math.SQRT1_2, dRot: 0, scale: 1 };
+      }
+      case "grid":
+        // Truchet-Kacheln wippen leicht in der Rotation (Raster bleibt lesbar).
+        return { dx: 0, dy: 0, dRot: Math.sin(TAU * phase + off) * (Math.PI / 8), scale: 1 };
+      case "packing":
+        // Atmen – sanftes Größen-Pulsieren des ganzen Elements.
+        return { dx: 0, dy: 0, dRot: 0, scale: 1 + Math.sin(TAU * phase + off) * 0.06 };
+      default:
+        // scatter/border: freies, desynchronisiertes Driften in kleinen Kreisen.
+        return {
+          dx: Math.sin(TAU * phase + off) * driftAmp,
+          dy: Math.cos(TAU * phase + off) * driftAmp,
+          dRot: 0,
+          scale: 1,
+        };
+    }
+  };
+
   for (const inst of instances) {
     const { cx, cy, size } = inst;
     // Arrangements mit struktureller Rotation (Truchet/Ringe/Welle/Diagonale)
     // behalten ihr baseRot; freie Elemente (scatter/border) folgen dem
     // Rotations-Rauschfeld statt einer einheitlichen Richtung.
     const rot = inst.baseRot ?? fieldAngle(cx, cy);
+    const m = motionFor(inst);
 
-    // Die Animation steckt jetzt im Punktgitter selbst: bei gesetzter Phase
-    // pulsieren die Punkte (zufällig größer/kleiner). Größe und Form der Shape
-    // bleiben dabei unverändert.
+    // Das Punkt-Pulsieren im Gitter bleibt (Phase an getImage); zusätzlich
+    // bewegt sich die ganze Shape gemäß m.
     const img =
       inst.shapeId && shapeImages
         ? shapeImages.getImage(inst.shapeId, inst.colorHex, size, animate ? phase : undefined)
         : undefined;
 
     p5.push();
-    p5.translate(cx, cy);
-    p5.rotate(rot);
+    p5.translate(cx + m.dx, cy + m.dy);
+    p5.rotate(rot + m.dRot);
+    if (m.scale !== 1) p5.scale(m.scale);
 
     if (img) {
       const fit = Math.min(size / img.width, size / img.height);
