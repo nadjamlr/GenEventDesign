@@ -48,7 +48,7 @@ function strSeed(str: string): number {
 // Auflösungs-Slider (0..10) -> Anzahl der Rasterzellen über die längere
 // Shape-Seite. Höher = stärker "hineingezoomt" (größere Zellen, weniger
 // Punkte); niedriger = feines Raster mit vielen kleinen Punkten.
-const GRID_MIN_CELLS = 4;
+const GRID_MIN_CELLS = 15;
 const GRID_MAX_CELLS = 28;
 function resolutionToCellCount(resolution: number): number {
   const t = Math.max(0, Math.min(1, resolution / 10));

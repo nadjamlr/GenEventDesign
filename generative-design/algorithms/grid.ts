@@ -95,6 +95,33 @@ function createRng(seed: number) {
   };
 }
 
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
+
+// Deterministischer Wert [0,1) pro Feldzelle (ix,iy) + Seed.
+function fieldHash(ix: number, iy: number, seed: number): number {
+  let h = (ix * 374761393 + iy * 668265263 + seed * 1013904223) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) | 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+// Glattes Value-Noise: benachbarte Positionen liefern ähnliche Werte, sodass
+// die daraus abgeleitete Rotation über die Fläche fließt statt zu springen.
+function valueNoise(x: number, y: number, seed: number): number {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const xf = x - x0;
+  const yf = y - y0;
+  const v00 = fieldHash(x0, y0, seed);
+  const v10 = fieldHash(x0 + 1, y0, seed);
+  const v01 = fieldHash(x0, y0 + 1, seed);
+  const v11 = fieldHash(x0 + 1, y0 + 1, seed);
+  const u = smoothstep(xf);
+  const v = smoothstep(yf);
+  return (v00 + (v10 - v00) * u) * (1 - v) + (v01 + (v11 - v01) * u) * v;
+}
+
 function rectsOverlap(
   ax: number,
   ay: number,
@@ -122,7 +149,7 @@ type Instance = {
   size: number;
   shapeId?: string;
   colorHex: string;
-  /** Basis-Rotation dieser Shape; ohne Angabe gilt die gemeinsame angleStep. */
+  /** Strukturelle Rotation dieser Shape; ohne Angabe greift das Rotations-Rauschfeld. */
   baseRot?: number;
 };
 
@@ -459,17 +486,32 @@ export function drawGrid(p5: p5Types, params: Params) {
 
   const exclusionRects = [...staticExclusionRects, ...(logoBox ? [logoBox] : [])];
 
-  // Eine gemeinsame Rotation für die ganze Komposition, in 45°-Schritten –
-  // alle Elemente zeigen einheitlich in dieselbe Richtung (und identisch auf
-  // Vorder- und Rückseite, da sharedRng seitenunabhängig ist).
-  const angleStep = Math.floor(sharedRng() * 8) * (Math.PI / 4);
-
   // Spalten/Zeilen steuern die Gesamtdichte; baseUnit ist die typische
   // Elementgröße, abgeleitet aus Fläche / Anzahl.
   const count = Math.max(1, columns * rows);
   const baseUnit = Math.sqrt((innerW * innerH) / count);
-  const bleedX = innerW * BLEED_RATIO;
-  const bleedY = innerH * BLEED_RATIO;
+
+  // Pro Shuffle leicht variierende Meta-Parameter, damit dieselbe Anordnung
+  // bei jedem Shuffle anders wirkt. Seitenunabhängig (sharedRng), damit Vorder-
+  // und Rückseite denselben Charakter behalten.
+  const bleedRatio = BLEED_RATIO * (0.6 + sharedRng() * 0.9); // wie weit über den Rand
+  const gapRatio = MIN_GAP_RATIO * (0.7 + sharedRng() * 0.6); // Abstand/Überlappung (scatter)
+  const scaleMin = 0.4 + sharedRng() * 0.4; // kleinste Elementgröße (scatter)
+  const scaleRange = 1.6 + sharedRng() * 2.2; // Größenspanne (scatter)
+  const scaleExp = 1.4 + sharedRng() * 1.8; // Verteilung: höher = mehr kleine Elemente
+
+  const bleedX = innerW * bleedRatio;
+  const bleedY = innerH * bleedRatio;
+
+  // Rotations-Rauschfeld: Elemente ohne eigene (strukturelle) Rotation werden
+  // anhand ihrer Position gedreht, statt alle in dieselbe Richtung zu zeigen –
+  // die Ausrichtung „fließt“ über die Fläche. Feature-Größe relativ zur
+  // Elementgröße; Seed seitenunabhängig (sharedSeed), damit Vorder-/Rückseite
+  // gleich rotieren.
+  const rotFieldCell = baseUnit * (2 + sharedRng() * 3);
+  const rotTurns = 1 + Math.floor(sharedRng() * 2); // 1–2 Umdrehungen über das Feld
+  const fieldAngle = (cx: number, cy: number) =>
+    valueNoise(cx / rotFieldCell, cy / rotFieldCell, sharedSeed) * TAU * rotTurns;
 
   // Gemeinsame Helfer für alle Anordnungen.
   const pickShape = () =>
@@ -498,7 +540,7 @@ export function drawGrid(p5: p5Types, params: Params) {
   // erlaubt (MIN_GAP_RATIO) für die gewollte Tiefenwirkung.
   function placeScatter(): Instance[] {
     const candidates = Array.from({ length: count }, (_, i) => {
-      const scale = 0.5 + rng() ** 2 * 2.5;
+      const scale = scaleMin + rng() ** scaleExp * scaleRange;
       return { idx: i, size: baseUnit * scale };
     }).sort((a, b) => b.size - a.size);
 
@@ -512,7 +554,7 @@ export function drawGrid(p5: p5Types, params: Params) {
           const bucket = grid.get(cellKey(ix + dx, iy + dy));
           if (!bucket) continue;
           for (const other of bucket) {
-            const minDist = ((size + other.size) / 2) * MIN_GAP_RATIO;
+            const minDist = ((size + other.size) / 2) * gapRatio;
             const ddx = cx - other.cx;
             const ddy = cy - other.cy;
             if (ddx * ddx + ddy * ddy < minDist * minDist) return true;
@@ -804,7 +846,10 @@ export function drawGrid(p5: p5Types, params: Params) {
 
   for (const inst of instances) {
     const { cx, cy, size } = inst;
-    const rot = inst.baseRot ?? angleStep;
+    // Arrangements mit struktureller Rotation (Truchet/Ringe/Welle/Diagonale)
+    // behalten ihr baseRot; freie Elemente (scatter/border) folgen dem
+    // Rotations-Rauschfeld statt einer einheitlichen Richtung.
+    const rot = inst.baseRot ?? fieldAngle(cx, cy);
 
     // Die Animation steckt jetzt im Punktgitter selbst: bei gesetzter Phase
     // pulsieren die Punkte (zufällig größer/kleiner). Größe und Form der Shape
