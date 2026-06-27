@@ -6,7 +6,6 @@ import useDesignStore from "@/store/designStore";
 import {
   drawGrid,
   resolveOverlayAreas,
-  RING_ROTATION_SECONDS,
   type ShapeImageProvider,
   type LogoImages,
   type AreaImageProvider,
@@ -647,9 +646,6 @@ export default function Canvas() {
     // Screenshot exakt den gerade laufenden Stand einfriert (statt neu zu
     // würfeln), liest exportRegistry.renderFrame diesen Wert mit aus.
     let currentPhase: number | undefined;
-    // Verstrichene Echtzeit des zuletzt gezeichneten Frames – für die
-    // kontinuierliche Ring-Rotation, damit ein Snapshot exakt den Stand einfriert.
-    let currentElapsed: number | undefined;
 
     // Mockup-Formate (z.B. T-Shirt): Produktfoto füllt die Canvas, die
     // generative Komposition wird in die Design-Zone (Brust) gerechnet.
@@ -848,11 +844,7 @@ export default function Canvas() {
         const { animate, loopDuration } = paramsRef.current;
         const time =
           animate && loopDuration > 0 ? (p.millis() / 1000 / loopDuration) % 1 : undefined;
-        // Echtzeit für kontinuierliche Bewegungen (Ring-Rotation) – nur während
-        // der Animation, sonst bleibt der Stand statisch.
-        const elapsed = animate ? p.millis() / 1000 : undefined;
         currentPhase = time;
-        currentElapsed = elapsed;
 
         if (stacked) {
           if (!frontGfx || frontGfx.width !== sideW || frontGfx.height !== sideH) {
@@ -861,8 +853,8 @@ export default function Canvas() {
             frontGfx = p.createGraphics(sideW, sideH);
             backGfx = p.createGraphics(sideW, sideH);
           }
-          drawGrid(frontGfx!, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, side: "front", time, elapsed });
-          drawGrid(backGfx!, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, side: "back", time, elapsed });
+          drawGrid(frontGfx!, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, side: "front", time });
+          drawGrid(backGfx!, { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, side: "back", time });
           p.clear();
           p.imageMode(p.CORNER);
           p.image(frontGfx!, 0, 0, sideW, sideH);
@@ -877,7 +869,7 @@ export default function Canvas() {
             p,
             w,
             h,
-            { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, time, elapsed },
+            { ...paramsRef.current, shapeImages, logoImages, areaImages, fontProvider, time },
             true
           );
         }
@@ -888,7 +880,7 @@ export default function Canvas() {
     // sichtbaren, skalierten Canvas-Größe). `time` undefined = statischer
     // Stand (normaler Export), gesetzt = eingefrorene Animationsphase
     // (Screenshot der laufenden Animation).
-    function renderSnapshot(overrideSide?: Side, time?: number, elapsed?: number) {
+    function renderSnapshot(overrideSide?: Side, time?: number) {
       const {
         columns,
         rows,
@@ -938,7 +930,6 @@ export default function Canvas() {
           fontProvider: getFontProvider(instance),
           side: overrideSide ?? side,
           time,
-          elapsed,
         },
         false
       );
@@ -948,7 +939,7 @@ export default function Canvas() {
     }
 
     exportRegistry.render = (overrideSide) => renderSnapshot(overrideSide);
-    exportRegistry.renderFrame = (overrideSide) => renderSnapshot(overrideSide, currentPhase, currentElapsed);
+    exportRegistry.renderFrame = (overrideSide) => renderSnapshot(overrideSide, currentPhase);
 
     // Nimmt eine nahtlose Animations-Schleife in voller Format-Auflösung als
     // WebM auf. Es wird in Echtzeit in ein Offscreen-Graphics gezeichnet und
@@ -976,13 +967,6 @@ export default function Canvas() {
       ensureRawLoaded([...params.selectedShapes, ...areaShapeIds]);
       ensureAreaPhotosLoaded(params.areas);
 
-      // Damit die kontinuierliche Ring-Rotation am Clip-Ende nahtlos schließt,
-      // muss sie über die Aufnahme eine ganze Anzahl Umdrehungen machen. Die
-      // verstrichene Zeit wird daher so skaliert, dass phase 0..1 genau
-      // `ringTurns` volle Umdrehungen ergibt (Tempo ≈ RING_ROTATION_SECONDS).
-      const ringTurns = Math.max(1, Math.round(duration / RING_ROTATION_SECONDS));
-      const ringElapsedEnd = ringTurns * RING_ROTATION_SECONDS;
-
       const drawFrame = (phase: number) => {
         drawComposition(
           instance,
@@ -997,7 +981,6 @@ export default function Canvas() {
             fontProvider,
             side: overrideSide ?? params.side,
             time: phase,
-            elapsed: phase * ringElapsedEnd,
           },
           false
         );

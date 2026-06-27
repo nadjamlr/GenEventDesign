@@ -63,12 +63,6 @@ type Params = {
    * Bewegung berechnet – die Ausgabe bleibt exakt wie bisher.
    */
   time?: number;
-  /**
-   * Verstrichene Echtzeit in Sekunden – für kontinuierliche, von der Loop-Länge
-   * unabhängige Bewegungen (aktuell die volle Ring-Rotation). Loop-gebundene
-   * Bewegungen nutzen weiterhin `time`/phase.
-   */
-  elapsed?: number;
 };
 
 const BLEED_RATIO = 0.18; // wie weit Elemente über den Rand hinausragen dürfen
@@ -81,10 +75,6 @@ const MIN_GAP_RATIO = 0.8; // Mindestabstand zwischen Mittelpunkten, relativ zur
 const MAX_PLACEMENT_ATTEMPTS = 24; // Versuche pro Element, eine Position mit genug Abstand zu Nachbarn zu finden
 
 const TAU = Math.PI * 2;
-// Sekunden pro voller Ring-Umdrehung. Höher = langsamer. Bewusst von der
-// Loop-Länge entkoppelt (über `elapsed`), damit die Rotation langsam sein kann,
-// ohne pro Loop eine ganze Umdrehung machen zu müssen.
-export const RING_ROTATION_SECONDS = 12;
 
 function hashString(str: string): number {
   let hash = 0;
@@ -267,7 +257,6 @@ export function drawGrid(p5: p5Types, params: Params) {
     side,
     fontProvider,
     time,
-    elapsed = 0,
   } = params;
 
   // Animation: phase in [0,1), bei time=undefined keine Bewegung.
@@ -869,28 +858,15 @@ export function drawGrid(p5: p5Types, params: Params) {
   // nahtlos (sin/cos bzw. volle Umdrehung), damit der Video-Export ruckelfrei
   // schließt. Seed seitenunabhängig (sharedSeed), damit Vorder-/Rückseite
   // synchron laufen.
-  const moveCcx = innerX + innerW / 2;
-  const moveCcy = innerY + innerH / 2;
   const driftAmp = baseUnit * 0.45;
-  // Volle, aber langsame Ring-Rotation: Winkel aus der Echtzeit (elapsed),
-  // nicht aus der Loop-Phase – sonst müsste eine volle Umdrehung in eine Loop
-  // passen und wäre zwangsläufig schnell. TAU * elapsed/Periode läuft beim
-  // Loop-Übergang nahtlos weiter (eine volle Umdrehung sieht identisch aus).
-  const ringAngle = (elapsed / RING_ROTATION_SECONDS) * TAU;
   type Motion = { dx: number; dy: number; dRot: number; scale: number };
   const motionFor = (inst: Instance): Motion => {
     if (!animate) return { dx: 0, dy: 0, dRot: 0, scale: 1 };
     const off = fieldHash(inst.idx + 1, 7, sharedSeed) * TAU; // desynchronisiert pro Element
     switch (arrangement) {
-      case "rings": {
-        // Volle, langsame Umdrehung um die Mitte; die Rotation folgt mit.
-        const ang = ringAngle;
-        const rx = inst.cx - moveCcx;
-        const ry = inst.cy - moveCcy;
-        const ca = Math.cos(ang);
-        const sa = Math.sin(ang);
-        return { dx: rx * ca - ry * sa - rx, dy: rx * sa + ry * ca - ry, dRot: ang, scale: 1 };
-      }
+      case "rings":
+        // Keine Eigenbewegung der Shapes – nur das Punkt-Pulsieren im Gitter bleibt.
+        return { dx: 0, dy: 0, dRot: 0, scale: 1 };
       case "wave": {
         // Wandernde Welle: die Wellenphase läuft über die Loop um TAU weiter,
         // sodass die Kämme seitlich durchwandern. Jedes Element folgt der neuen
