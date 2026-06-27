@@ -11,7 +11,7 @@ import {
   type AreaImageProvider,
 } from "@/algorithms/grid";
 import { exportRegistry } from "@/lib/canvasExport";
-import { shapes } from "@/lib/shapes";
+import { shapes, FULL_LOGO_SHAPE_ID, FULL_LOGO_SRC } from "@/lib/shapes";
 import type { AreaDef } from "@/lib/areas";
 import { hasSides, getSideLayout, FORMAT_SIZES, type Side } from "@/lib/formats";
 import { getGoogleFontUrl } from "@/lib/fonts";
@@ -451,8 +451,10 @@ export default function Canvas() {
     function ensureRawLoaded(ids: string[]) {
       for (const id of ids) {
         if (rawImages.has(id) || loadingRaw.has(id)) continue;
-        const shape = shapes.find((s) => s.id === id);
-        if (!shape) continue;
+        // Das volle Logo (synthetische Shape) hat seine eigene Quelle; sonst die
+        // Datei der jeweiligen Shape.
+        const src = id === FULL_LOGO_SHAPE_ID ? FULL_LOGO_SRC : shapes.find((s) => s.id === id)?.src;
+        if (!src) continue;
         loadingRaw.add(id);
 
         // p.loadImage() decodes via createImageBitmap() on a Blob without a
@@ -466,7 +468,7 @@ export default function Canvas() {
         htmlImg.onerror = () => {
           loadingRaw.delete(id);
         };
-        htmlImg.src = shape.src;
+        htmlImg.src = src;
       }
     }
 
@@ -891,7 +893,7 @@ export default function Canvas() {
         const areaShapeIds = paramsRef.current.areas
           .filter((a): a is AreaDef & { shapeId: string } => !!a.shapeId)
           .map((a) => a.shapeId);
-        ensureRawLoaded([...paramsRef.current.selectedShapes, ...areaShapeIds]);
+        ensureRawLoaded([...paramsRef.current.selectedShapes, FULL_LOGO_SHAPE_ID, ...areaShapeIds]);
         ensureAreaPhotosLoaded(paramsRef.current.areas);
         const fontProvider = getFontProvider(p);
 
@@ -1035,7 +1037,7 @@ export default function Canvas() {
       const areaShapeIds = params.areas
         .filter((a): a is AreaDef & { shapeId: string } => !!a.shapeId)
         .map((a) => a.shapeId);
-      ensureRawLoaded([...params.selectedShapes, ...areaShapeIds]);
+      ensureRawLoaded([...params.selectedShapes, FULL_LOGO_SHAPE_ID, ...areaShapeIds]);
       ensureAreaPhotosLoaded(params.areas);
 
       const drawFrame = (phase: number) => {

@@ -1,4 +1,5 @@
 import type p5Types from "p5";
+import { shapes as ALL_SHAPES, FULL_LOGO_SHAPE_ID } from "@/lib/shapes";
 import { getLogoZones, getAnchorBox, ALL_ANCHORS, type LogoAnchor } from "@/lib/logoPlacement";
 import type { AreaDef } from "@/lib/areas";
 import { getInputFields, getInputLayout, type InputFieldDef } from "@/lib/inputFields";
@@ -323,8 +324,15 @@ export function drawGrid(p5: p5Types, params: Params) {
     return { w: rawWidth, h: leading };
   }
 
+  // Sind ALLE Shapes ausgewählt, wird statt der einzelnen Buchstaben das volle
+  // Logo verwendet (als synthetische Shape, gerendert wie alle anderen – also
+  // als Punktgitter, mit denselben Anordnungen und Animationen).
+  const allShapesSelected =
+    ALL_SHAPES.length > 0 && ALL_SHAPES.every((s) => selectedShapes.includes(s.id));
   const availableShapes = shapeImages
-    ? selectedShapes.filter((id) => shapeImages.isReady(id))
+    ? allShapesSelected && shapeImages.isReady(FULL_LOGO_SHAPE_ID)
+      ? [FULL_LOGO_SHAPE_ID]
+      : selectedShapes.filter((id) => shapeImages.isReady(id))
     : [];
 
   const seed = hashString(
