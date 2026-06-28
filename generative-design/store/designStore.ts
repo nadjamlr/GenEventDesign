@@ -71,7 +71,7 @@ const useDesignStore = create<DesignStore>((set) => ({
   logoEnabled: true,
   logoMode: "random",
   animate: false,
-  loopDuration: 9,
+  loopDuration: 5.5,
   gridResolution: 5,
   dotSize: 4,
   dotVariation: 0,

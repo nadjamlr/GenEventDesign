@@ -2,7 +2,7 @@ import type { LogoAnchor } from "@/lib/logoPlacement";
 import type { TextStyleName } from "@/lib/textStyles";
 import type { Side } from "@/lib/formats";
 
-export type AreaKind = "text" | "image";
+export type AreaKind = "text" | "image" | "video";
 
 // Anker einer Area: entweder eine feste Position (wie beim Logo) oder
 // "background" – dann füllt das Bild den kompletten Rahmen als Hintergrund.
@@ -15,9 +15,10 @@ export type AreaDef = {
   widthRatio: number; // relativ zur Rahmenbreite (0..1)
   heightRatio: number; // relativ zur Rahmenhöhe (0..1)
   text?: string; // bei kind === "text"
-  shapeId?: string; // Maskenform bei kind === "image"
+  shapeId?: string; // Maskenform bei kind === "image"/"video"
   imageDataUrl?: string; // hochgeladenes Bild bei kind === "image"
-  grayscale?: boolean; // Bild schwarz/weiß darstellen
+  videoUrl?: string; // hochgeladenes Video (Object-URL) bei kind === "video"
+  grayscale?: boolean; // Bild/Video schwarz/weiß darstellen
   /** Text-Rolle (Größe + Weight) bei kind === "text", siehe lib/textStyles.ts. Default "p1". */
   style?: TextStyleName;
   /**
@@ -42,3 +43,4 @@ export type AreaDef = {
 // statt dass es vom Zufall abhängt, wie sehr der Text die Box ausfüllt.
 export const DEFAULT_TEXT_AREA_SIZE = { widthRatio: 0.35, heightRatio: 0.1 };
 export const DEFAULT_IMAGE_AREA_SIZE = { widthRatio: 0.55, heightRatio: 0.55 };
+export const DEFAULT_VIDEO_AREA_SIZE = { widthRatio: 0.55, heightRatio: 0.55 };

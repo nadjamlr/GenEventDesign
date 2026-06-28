@@ -573,9 +573,17 @@ export default function Canvas() {
     // Hochgeladene Fotos für Bild-Areas, pro Area-Id.
     const areaPhotoImages = new Map<string, HTMLImageElement>();
     const loadingAreaPhotos = new Set<string>();
-    // Fertige, durch die Shape maskierte Komposite, gecacht pro "areaId|w|h".
+    // Hochgeladene Videos für Video-Areas, pro Area-Id – spielen im
+    // Hintergrund endlos in einer Loop, damit beim Zeichnen jederzeit ein
+    // aktuelles Frame zur Verfügung steht.
+    const areaVideoElements = new Map<string, HTMLVideoElement>();
+    const loadingAreaVideos = new Set<string>();
+    // Fertige Komposite, gecacht pro "areaId|w|h". Bei Fotos bleibt der Eintrag
+    // unverändert (Foto ändert sich nie); bei Videos wird derselbe Pixel-
+    // Puffer wiederverwendet, aber bei jedem Aufruf mit dem aktuellen Frame
+    // neu bemalt (siehe isVideo-Zweig unten).
     const areaMaskedCache = new Map<string, p5.Image>();
-    // Hintergrund-Komposite (Foto "cover"-skaliert, ohne Maske), pro "areaId|w|h".
+    // Hintergrund-Komposite (Foto/Video "cover"-skaliert, ohne Maske), pro "areaId|w|h".
     const areaBgCache = new Map<string, p5.Image>();
 
     function ensureAreaPhotosLoaded(areaList: AreaDef[]) {
@@ -596,31 +604,73 @@ export default function Canvas() {
       }
     }
 
-    // Foto "cover"-skaliert in die Box zeichnen, dann mit der Shape-Silhouette
-    // maskieren (destination-in) – die Shape füllt die Box komplett aus
-    // ("sehr hoch skaliert"), das Foto ist nur innerhalb ihrer Form sichtbar.
+    function ensureAreaVideosLoaded(areaList: AreaDef[]) {
+      for (const area of areaList) {
+        if (area.kind !== "video" || !area.videoUrl) continue;
+        if (areaVideoElements.has(area.id) || loadingAreaVideos.has(area.id)) continue;
+        loadingAreaVideos.add(area.id);
+
+        const videoEl = document.createElement("video");
+        videoEl.muted = true;
+        videoEl.loop = true;
+        videoEl.playsInline = true;
+        videoEl.src = area.videoUrl;
+        videoEl.play().catch(() => {});
+        areaVideoElements.set(area.id, videoEl);
+        loadingAreaVideos.delete(area.id);
+      }
+    }
+
+    // Liefert die Bildquelle einer Area (Foto-Element oder – falls schon genug
+    // Frames geladen sind (readyState >= HAVE_CURRENT_DATA) – das Video-
+    // Element selbst, das drawImage() direkt als aktuelles Frame akzeptiert.
+    function getAreaMediaSource(area: AreaDef): HTMLImageElement | HTMLVideoElement | undefined {
+      if (area.kind === "video") {
+        const video = areaVideoElements.get(area.id);
+        return video && video.readyState >= 2 ? video : undefined;
+      }
+      return areaPhotoImages.get(area.id);
+    }
+
+    function mediaSize(media: HTMLImageElement | HTMLVideoElement): { w: number; h: number } {
+      if (media instanceof HTMLVideoElement) return { w: media.videoWidth, h: media.videoHeight };
+      return { w: media.naturalWidth, h: media.naturalHeight };
+    }
+
+    // Foto/Video "cover"-skaliert in die Box zeichnen, dann mit der Shape-
+    // Silhouette maskieren (destination-in) – die Shape füllt die Box
+    // komplett aus ("sehr hoch skaliert"), das Motiv ist nur innerhalb ihrer
+    // Form sichtbar. Bei Videos wird der Puffer (anders als bei Fotos) bei
+    // jedem Aufruf neu mit dem aktuellen Frame bemalt.
     function getMaskedAreaImage(p: p5, area: AreaDef, w: number, h: number): p5.Image | undefined {
-      const photo = areaPhotoImages.get(area.id);
-      if (!photo) return undefined;
-      // Ohne shapeId ("No Shape") wird das Foto nur cover-skaliert, ohne Maske.
+      const media = getAreaMediaSource(area);
+      if (!media) return undefined;
+      // Ohne shapeId ("No Shape") wird das Motiv nur cover-skaliert, ohne Maske.
       const mask = area.shapeId ? rawImages.get(area.shapeId) : undefined;
       if (area.shapeId && !mask) return undefined;
 
       const rw = Math.round(w);
       const rh = Math.round(h);
+      const isVideo = area.kind === "video";
       const key = `${area.id}|${rw}|${rh}|${area.grayscale ? 1 : 0}`;
-      const cached = areaMaskedCache.get(key);
-      if (cached) return cached;
 
-      const pImg = p.createImage(rw, rh);
+      let pImg = areaMaskedCache.get(key);
+      if (pImg && !isVideo) return pImg;
+      if (!pImg) {
+        pImg = p.createImage(rw, rh);
+        areaMaskedCache.set(key, pImg);
+      }
+      const { w: mediaW, h: mediaH } = mediaSize(media);
+      if (mediaW <= 0 || mediaH <= 0) return isVideo ? undefined : pImg;
+
       const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D })
         .drawingContext;
 
       ctx.filter = area.grayscale ? "grayscale(1)" : "none";
-      const photoScale = Math.max(rw / photo.naturalWidth, rh / photo.naturalHeight);
-      const pw = photo.naturalWidth * photoScale;
-      const ph = photo.naturalHeight * photoScale;
-      ctx.drawImage(photo, (rw - pw) / 2, (rh - ph) / 2, pw, ph);
+      const mediaScale = Math.max(rw / mediaW, rh / mediaH);
+      const pw = mediaW * mediaScale;
+      const ph = mediaH * mediaScale;
+      ctx.drawImage(media, (rw - pw) / 2, (rh - ph) / 2, pw, ph);
       ctx.filter = "none";
 
       if (mask) {
@@ -629,40 +679,46 @@ export default function Canvas() {
         const mw = mask.naturalWidth * maskScale;
         const mh = mask.naturalHeight * maskScale;
         ctx.drawImage(mask, (rw - mw) / 2, (rh - mh) / 2, mw, mh);
+        ctx.globalCompositeOperation = "source-over";
       }
 
-      areaMaskedCache.set(key, pImg);
       return pImg;
     }
 
-    // Foto "cover"-skaliert in eine w×h-Fläche (ohne Maske) – für Hintergrund-
-    // Areas, die den kompletten Rahmen füllen.
+    // Foto/Video "cover"-skaliert in eine w×h-Fläche (ohne Maske) – für
+    // Hintergrund-Areas, die den kompletten Rahmen füllen.
     function getBackgroundCoverImage(
       p: p5,
       area: AreaDef,
       w: number,
       h: number
     ): p5.Image | undefined {
-      const photo = areaPhotoImages.get(area.id);
-      if (!photo) return undefined;
+      const media = getAreaMediaSource(area);
+      if (!media) return undefined;
 
       const rw = Math.round(w);
       const rh = Math.round(h);
+      const isVideo = area.kind === "video";
       const key = `${area.id}|${rw}|${rh}|${area.grayscale ? 1 : 0}`;
-      const cached = areaBgCache.get(key);
-      if (cached) return cached;
 
-      const pImg = p.createImage(rw, rh);
+      let pImg = areaBgCache.get(key);
+      if (pImg && !isVideo) return pImg;
+      if (!pImg) {
+        pImg = p.createImage(rw, rh);
+        areaBgCache.set(key, pImg);
+      }
+      const { w: mediaW, h: mediaH } = mediaSize(media);
+      if (mediaW <= 0 || mediaH <= 0) return isVideo ? undefined : pImg;
+
       const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D })
         .drawingContext;
       ctx.filter = area.grayscale ? "grayscale(1)" : "none";
-      const scale = Math.max(rw / photo.naturalWidth, rh / photo.naturalHeight);
-      const pw = photo.naturalWidth * scale;
-      const ph = photo.naturalHeight * scale;
-      ctx.drawImage(photo, (rw - pw) / 2, (rh - ph) / 2, pw, ph);
+      const scale = Math.max(rw / mediaW, rh / mediaH);
+      const pw = mediaW * scale;
+      const ph = mediaH * scale;
+      ctx.drawImage(media, (rw - pw) / 2, (rh - ph) / 2, pw, ph);
       ctx.filter = "none";
 
-      areaBgCache.set(key, pImg);
       return pImg;
     }
 
@@ -898,6 +954,7 @@ export default function Canvas() {
           .map((a) => a.shapeId);
         ensureRawLoaded([...paramsRef.current.selectedShapes, FULL_LOGO_SHAPE_ID, ...areaShapeIds]);
         ensureAreaPhotosLoaded(paramsRef.current.areas);
+        ensureAreaVideosLoaded(paramsRef.current.areas);
         const fontProvider = getFontProvider(p);
 
         // Animations-Phase aus der Echtzeit ableiten; bei ausgeschalteter
@@ -1042,6 +1099,7 @@ export default function Canvas() {
         .map((a) => a.shapeId);
       ensureRawLoaded([...params.selectedShapes, FULL_LOGO_SHAPE_ID, ...areaShapeIds]);
       ensureAreaPhotosLoaded(params.areas);
+      ensureAreaVideosLoaded(params.areas);
 
       const drawFrame = (phase: number) => {
         drawComposition(
@@ -1122,10 +1180,130 @@ export default function Canvas() {
       });
     };
 
+    // Aufnahme mit offenem Ende (Record/Stop statt fester Dauer): nutzt
+    // dieselbe Offscreen-Graphics + manuelles Frame-Capturing wie
+    // renderVideo oben, treibt die Animationsphase aber per Echtzeit-Uhr an
+    // (statt einer vorab berechneten Gesamt-Frameanzahl) und läuft, bis
+    // stopRecording() aufgerufen wird.
+    let activeRecording: {
+      gfx: ReturnType<typeof instance.createGraphics>;
+      recorder: MediaRecorder;
+      chunks: BlobPart[];
+      mimeType: string;
+      timeoutId: number;
+    } | null = null;
+
+    exportRegistry.startRecording = (options) => {
+      if (activeRecording) return;
+      const fps = options?.fps ?? 30;
+      const overrideSide = options?.side;
+      const params = paramsRef.current;
+      const { width, height, loopDuration, animate } = params;
+      const gfx = instance.createGraphics(width, height);
+      const shapeImages: ShapeImageProvider = {
+        isReady: (id) => rawImages.has(id),
+        getImage: (id, colorHex, targetSize, time) =>
+          getTintedImage(instance, id, colorHex, targetSize, params.gridResolution, params.dotSize, time),
+      };
+      const areaImagesLocal: AreaImageProvider = {
+        getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
+        getBackgroundImage: (area, w, h) => getBackgroundCoverImage(instance, area, w, h),
+      };
+      const fontProvider = getFontProvider(instance);
+      const areaShapeIds = params.areas
+        .filter((a): a is AreaDef & { shapeId: string } => !!a.shapeId)
+        .map((a) => a.shapeId);
+      ensureRawLoaded([...params.selectedShapes, FULL_LOGO_SHAPE_ID, ...areaShapeIds]);
+      ensureAreaPhotosLoaded(params.areas);
+      ensureAreaVideosLoaded(params.areas);
+
+      const drawFrame = (phase: number | undefined) => {
+        drawComposition(
+          instance,
+          gfx,
+          width,
+          height,
+          {
+            ...params,
+            shapeImages,
+            logoImages,
+            areaImages: areaImagesLocal,
+            fontProvider,
+            side: overrideSide ?? params.side,
+            time: phase,
+          },
+          false
+        );
+      };
+
+      // Anders als bei renderVideo wird die sichtbare Schleife hier NICHT
+      // angehalten (kein exportingVideo = true): Aufnahme läuft parallel zur
+      // normalen, in Echtzeit weiterlaufenden Vorschau, damit man sieht, was
+      // gerade aufgenommen wird, und weiß, wann man stoppen will.
+      const startMs = performance.now();
+      drawFrame(animate && loopDuration > 0 ? 0 : undefined);
+
+      const stream = (gfx.elt as HTMLCanvasElement).captureStream(0);
+      const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
+      const mimeType = pickVideoMime();
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 16_000_000 });
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      const frameMs = 1000 / fps;
+      const tick = () => {
+        if (!activeRecording) return;
+        const elapsedSec = (performance.now() - startMs) / 1000;
+        const phase = animate && loopDuration > 0 ? (elapsedSec / loopDuration) % 1 : undefined;
+        drawFrame(phase);
+        track.requestFrame?.();
+        activeRecording.timeoutId = window.setTimeout(tick, frameMs);
+      };
+
+      activeRecording = { gfx, recorder, chunks, mimeType, timeoutId: window.setTimeout(tick, frameMs) };
+      recorder.start();
+    };
+
+    exportRegistry.stopRecording = () => {
+      return new Promise<Blob>((resolve) => {
+        if (!activeRecording) {
+          resolve(new Blob());
+          return;
+        }
+        const { gfx, recorder, chunks, mimeType, timeoutId } = activeRecording;
+        window.clearTimeout(timeoutId);
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          gfx.remove();
+          activeRecording = null;
+          resolve(new Blob(chunks, { type: mimeType }));
+        };
+        recorder.onstop = finish;
+        recorder.onerror = finish;
+        try {
+          recorder.requestData?.();
+          recorder.stop();
+        } catch {
+          finish();
+        }
+      });
+    };
+
     return () => {
       exportRegistry.render = null;
       exportRegistry.renderVideo = null;
       exportRegistry.renderFrame = null;
+      if (activeRecording) {
+        window.clearTimeout(activeRecording.timeoutId);
+        activeRecording.gfx.remove();
+        activeRecording = null;
+      }
+      exportRegistry.startRecording = null;
+      exportRegistry.stopRecording = null;
       canvasElt?.removeEventListener("mousedown", handleMouseDown);
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);

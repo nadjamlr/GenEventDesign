@@ -75,7 +75,8 @@ type Params = {
 
 const BLEED_RATIO = 0.3; // wie weit Elemente über den Rand hinausragen dürfen
 const FALLBACK_COLOR = "#000000"; // primary-color, falls keine Farbe ausgewählt ist
-const LOGO_WIDTH_RATIO = 0.28; // Logo-Breite relativ zur Rahmenbreite
+const LOGO_WIDTH_RATIO_MIN = 0.18; // kleinste/größte Logo-Breite relativ zur Rahmenbreite – pro Komposition zufällig dazwischen
+const LOGO_WIDTH_RATIO_MAX = 0.4;
 const PADDING_RATIO = 0.06; // Abstand zum Rahmenrand relativ zur Rahmenbreite
 const POSITIONED_FIELD_WIDTH_RATIO = 0.35; // Breite eines einzeln positionierten Feldes
 const POSITIONED_FIELD_HEIGHT_RATIO = 0.08; // Höhe eines einzeln positionierten Feldes
@@ -331,7 +332,7 @@ export function resolveOverlayAreas(
       w = measured.w + innerW * AREA_PAD_RATIO * 2;
       h = measured.h + innerH * AREA_PAD_RATIO * 2;
     } else {
-      const isUnmaskedImage = area.kind === "image" && !area.shapeId;
+      const isUnmaskedImage = (area.kind === "image" || area.kind === "video") && !area.shapeId;
       const squareSide = Math.min(innerW, innerH) * area.widthRatio;
       w = isUnmaskedImage ? squareSide : innerW * area.widthRatio;
       h = isUnmaskedImage ? squareSide : innerH * area.heightRatio;
@@ -430,7 +431,7 @@ export function drawGrid(p5: p5Types, params: Params) {
   // Rahmen und wird vor den Shapes gezeichnet. Die letzte gewinnt, falls
   // mehrere existieren. Alle übrigen Areas werden normal platziert.
   const backgroundArea = sideAreas
-    .filter((a) => a.kind === "image" && a.anchor === "background")
+    .filter((a) => (a.kind === "image" || a.kind === "video") && a.anchor === "background")
     .pop();
 
   if (backgroundArea && areaImages) {
@@ -527,7 +528,7 @@ export function drawGrid(p5: p5Types, params: Params) {
   // wie groß die jeweilige Shape ist. Text-Areas bleiben komplett ausgeschlossen.
   const staticExclusionRects = [
     ...resolvedAreas.map(({ area, x, y, w, h }) => {
-      if (area.kind !== "image") return { x, y, w, h };
+      if (area.kind !== "image" && area.kind !== "video") return { x, y, w, h };
       const { insetX, insetY } = imageBleedInset(w, h);
       return { x: x + insetX, y: y + insetY, w: w - insetX * 2, h: h - insetY * 2 };
     }),
@@ -547,7 +548,10 @@ export function drawGrid(p5: p5Types, params: Params) {
   let logoBox: { x: number; y: number; w: number; h: number } | undefined;
   if (showLogo && logoEnabled && logoHasImage) {
     const refImg = logoVariantImages!.black ?? logoVariantImages!.white!;
-    const logoW = innerW * LOGO_WIDTH_RATIO;
+    // Zufällige, aber seitenunabhängige (sharedRng) Logo-Größe pro Komposition,
+    // statt immer derselben festen Breite.
+    const logoWidthRatio = LOGO_WIDTH_RATIO_MIN + sharedRng() * (LOGO_WIDTH_RATIO_MAX - LOGO_WIDTH_RATIO_MIN);
+    const logoW = innerW * logoWidthRatio;
     const logoH = logoW * (refImg.height / refImg.width);
 
     const isFree = (anchor: LogoAnchor) => {
@@ -660,11 +664,15 @@ export function drawGrid(p5: p5Types, params: Params) {
   // gedrehte Kopie direkt darunter für eine geschichtete Tiefenwirkung.
   const layeringEnabled = Math.abs(hashString(`layering|${seedParam}`)) % 3 === 0;
   // Kombinations-Modus: zusätzliche Option, bei der jede platzierte Instanz
-  // nicht eine einzelne Shape zeigt, sondern eine der 15 festen Form-
-  // Kombinationen (siehe SHAPE_COMBOS in lib/shapes.ts) – wiederholt über die
-  // Komposition verteilt (per idx durchgezählt), wobei die Teile innerhalb
-  // einer Kombination unterschiedliche Farben/Opazitäten bekommen.
-  const comboModeEnabled = Math.abs(hashString(`combo|${seedParam}`)) % 3 === 0;
+  // nicht eine einzelne Shape zeigt, sondern eine feste Form-Kombination
+  // (siehe SHAPE_COMBOS in lib/shapes.ts), wobei die Teile innerhalb einer
+  // Kombination unterschiedliche Farben/Opazitäten bekommen. Pro Komposition
+  // wird genau EINE der 15 Kombinationen gewählt und überall wiederholt –
+  // nicht mehrere unterschiedliche Muster gleichzeitig. Ist das volle Logo
+  // aktiv (alle Shapes ausgewählt), bleibt der Kombinations-Modus aus, damit
+  // dann wirklich nur das Logo erscheint und keine einzelnen Buchstaben-Teile.
+  const comboModeEnabled = !allShapesSelected && Math.abs(hashString(`combo|${seedParam}`)) % 3 === 0;
+  const chosenCombo = SHAPE_COMBOS[Math.abs(hashString(`comboChoice|${seedParam}`)) % SHAPE_COMBOS.length];
   // "Einfliegen"-Animation: eigener, von der Anordnung unabhängiger
   // Bewegungs-Modus (siehe shapeFlyIn.ts) – ersetzt statt überlagert die
   // Anordnungs-spezifische Bewegung aus shapeAnimation.ts, wenn aktiv. Das
@@ -1223,11 +1231,11 @@ export function drawGrid(p5: p5Types, params: Params) {
     return getShapeMotion(arrangement, phase, off, driftAmp, inst);
   };
 
-  // Bild-Areas VOR den Shapes zeichnen, damit die Shapes sichtbar über den
-  // Bleed-Rand (IMAGE_SHAPE_BLEED_RATIO) hinwegragen können. Text-Areas
+  // Bild-/Video-Areas VOR den Shapes zeichnen, damit die Shapes sichtbar über
+  // den Bleed-Rand (IMAGE_SHAPE_BLEED_RATIO) hinwegragen können. Text-Areas
   // bleiben bewusst in der Schleife NACH den Shapes (siehe weiter unten).
   for (const { area, x, y, w, h } of resolvedAreas) {
-    if (area.kind === "image" && areaImages) {
+    if ((area.kind === "image" || area.kind === "video") && areaImages) {
       const img = areaImages.getImage(area, w, h);
       if (img) {
         p5.imageMode(p5.CORNER);
@@ -1264,13 +1272,13 @@ export function drawGrid(p5: p5Types, params: Params) {
     const opacity = (inst.opacityOverride ?? fieldOpacity(cx, cy)) * (m.opacityMul ?? 1);
 
     // Kombinations-Modus (zusätzliche Option, siehe comboModeEnabled): statt
-    // einer einzelnen Shape wird eine der 15 festen Form-Kombinationen
-    // gezeichnet (wiederholt, per idx durchgezählt) – jeder Teil bekommt eine
-    // eigene Farbe (nächste Palettenfarbe) und abwechselnd hohe/niedrige
-    // Opazität, damit die Kombination als zusammengesetztes Symbol lesbar
-    // bleibt statt als eine flache Fläche.
+    // einer einzelnen Shape wird überall dieselbe, einmal pro Komposition
+    // gewählte Form-Kombination gezeichnet (chosenCombo) – jeder Teil
+    // bekommt eine eigene Farbe (nächste Palettenfarbe) und abwechselnd
+    // hohe/niedrige Opazität, damit die Kombination als zusammengesetztes
+    // Symbol lesbar bleibt statt als eine flache Fläche.
     if (comboModeEnabled && inst.shapeId && shapeImages) {
-      const combo = SHAPE_COMBOS[inst.idx % SHAPE_COMBOS.length];
+      const combo = chosenCombo;
       const baseColorIdx = colorPool.indexOf(inst.colorHex);
       p5.push();
       p5.translate(cx + m.dx, cy + m.dy);
@@ -1345,7 +1353,7 @@ export function drawGrid(p5: p5Types, params: Params) {
   // gemappt ist (siehe getMaskedAreaImage), entspricht der Quell-Ausschnitt
   // exakt dem Ziel-Ausschnitt.
   for (const { area, x, y, w, h } of resolvedAreas) {
-    if (area.kind === "image" && areaImages) {
+    if ((area.kind === "image" || area.kind === "video") && areaImages) {
       const img = areaImages.getImage(area, w, h);
       if (!img) continue;
       const { insetX, insetY } = imageBleedInset(w, h);

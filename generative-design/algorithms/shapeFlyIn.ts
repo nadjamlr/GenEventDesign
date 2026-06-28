@@ -44,13 +44,24 @@ export function pickFlyInDirection(seed: number): FlyInDirection {
 // Laufzeit in Phasen-Brüche (0..1) umgerechnet. Reihenfolge: zuerst sind ALLE
 // Elemente draußen, dann fliegt nacheinander (gestaffelt über
 // ENTER_SPREAD_SECONDS) jedes Element ein und bleibt abrupt stehen, hält
-// HOLD_SECONDS lang, und fliegt ebenso gestaffelt wieder hinaus – am Loop-
-// Rand (t=0/1) ist die Canvas dadurch garantiert leer.
-const ENTER_SPREAD_SECONDS = 1.44; // Streuung der Start-Zeitpunkte – breit, für deutlich nacheinander statt gleichzeitig
-const ENTER_FLIGHT_SECONDS = 0.36; // Flugzeit eines einzelnen Elements bei Standardgeschwindigkeit (speedFactor 0.5)
-const HOLD_SECONDS = 5; // wie lange alle Elemente an ihrer Position stehen bleiben
-const EXIT_SPREAD_SECONDS = 1.16; // genauso breit gestreut wie der Einflug
-const EXIT_FLIGHT_SECONDS = 0.64;
+// (adaptiv, siehe MIN_HOLD_SECONDS unten), und fliegt ebenso gestaffelt
+// wieder hinaus – am Loop-Rand (t=0/1) ist die Canvas dadurch garantiert leer.
+const ENTER_SPREAD_SECONDS = 0.7; // Streuung der Start-Zeitpunkte – kurz, damit die Canvas schnell gefüllt ist statt lange leer/spärlich zu wirken
+const ENTER_FLIGHT_SECONDS = 0.3; // Flugzeit eines einzelnen Elements bei Standardgeschwindigkeit (speedFactor 0.5)
+const EXIT_SPREAD_SECONDS = 0.7; // genauso kurz gestreut wie der Einflug
+const EXIT_FLIGHT_SECONDS = 0.4;
+
+// HOLD ist bewusst KEINE feste Konstante, sondern "was von der Loop nach
+// Enter+Exit übrig bleibt" (siehe presence()). Eine feste Sekundenzahl hätte
+// bei einer Loop-Länge, die größer ist als Enter+HOLD+Exit zusammen, eine
+// große, komplett leere Lücke zwischen Ausflug und nächstem Einflug erzeugt
+// (z.B. bei 9s Loop und nur 5.1s "Budget": ~3.9s nichts zu sehen) – und genau
+// in dieser Lücke bzw. im kurzen Ein-/Ausflug-Fenster (statt in der Hold-
+// Phase) landet man beim Hinschauen überproportional oft, was wie
+// "Shapes stehen nie an ihrer richtigen Position" wirkt. Mit adaptivem HOLD
+// füllt die Haltephase immer (fast) die ganze Loop, unabhängig vom
+// eingestellten Wert.
+const MIN_HOLD_SECONDS = 0.3;
 
 // Erlaubte Spanne für den Geschwindigkeits-Faktor pro Element: >1 = schneller
 // (kürzere Flugzeit), <1 = langsamer. Bei MAX_SPEED bleibt noch genug Puffer
@@ -87,11 +98,15 @@ function easeOutTail(u: number): number {
 // easeOutTail() das letzte Stück vor der Zielposition ab; beim Ausfliegen
 // (zeitlich gespiegelt) ist es entsprechend gleich nach dem Start (= nahe
 // der Position) langsam und wird danach schneller. Das Exit-Fenster startet
-// HOLD_SECONDS nach dem spätesten Eintreffen (anhand der Standard-Flugzeit,
-// nicht der tatsächlichen `speed`), damit seine Lage nicht von der
-// individuellen Geschwindigkeit eines Elements abhängt.
+// nach der (adaptiven) Haltephase nach dem spätesten Eintreffen (anhand der
+// Standard-Flugzeit, nicht der tatsächlichen `speed`), damit seine Lage nicht
+// von der individuellen Geschwindigkeit eines Elements abhängt.
 function presence(t: number, off: number, speed: number, loopDurationSeconds: number): number {
   const loop = Math.max(0.1, loopDurationSeconds);
+  // Adaptiv: HOLD füllt den Rest der Loop nach dem festen Enter+Exit-Budget,
+  // statt eine feste Sekundenzahl zu sein (siehe MIN_HOLD_SECONDS oben).
+  const transitBudget = ENTER_SPREAD_SECONDS + ENTER_FLIGHT_SECONDS + EXIT_SPREAD_SECONDS + EXIT_FLIGHT_SECONDS;
+  const holdSeconds = Math.max(MIN_HOLD_SECONDS, loop - transitBudget);
   const enterSpread = ENTER_SPREAD_SECONDS / loop;
   const enterDuration = ENTER_FLIGHT_SECONDS / speed / loop;
   const enterStart = off * enterSpread;
@@ -100,7 +115,7 @@ function presence(t: number, off: number, speed: number, loopDurationSeconds: nu
   if (t < enterEnd) return easeOutTail((t - enterStart) / enterDuration);
 
   const exitSpread = EXIT_SPREAD_SECONDS / loop;
-  const exitWindowStart = (ENTER_SPREAD_SECONDS + ENTER_FLIGHT_SECONDS + HOLD_SECONDS) / loop;
+  const exitWindowStart = (ENTER_SPREAD_SECONDS + ENTER_FLIGHT_SECONDS + holdSeconds) / loop;
   const exitDuration = EXIT_FLIGHT_SECONDS / speed / loop;
   const exitStart = exitWindowStart + off * exitSpread;
   const exitEnd = exitStart + exitDuration;

@@ -29,11 +29,13 @@ import {
   type AreaDef,
   DEFAULT_IMAGE_AREA_SIZE,
   DEFAULT_TEXT_AREA_SIZE,
+  DEFAULT_VIDEO_AREA_SIZE,
 } from "@/lib/areas"
 
 const EXPORT_TYPES = ["png", "pdf"] as const;
 const SIDES: Side[] = ["front", "back"];
-const AREA_KINDS: AreaKind[] = ["text", "image"];
+const AREA_KINDS: AreaKind[] = ["text", "image", "video"];
+const AREA_KIND_LABELS: Record<AreaKind, string> = { text: "Text", image: "Bild", video: "Video" };
 const NO_IMAGE_AREA_FORMATS = ["Business Card", "Ticket", "Voucher"];
 const NO_AREAS_FORMATS = ["Business Card", "Ticket", "Voucher"];
 // Bei diesen Formaten werden alle Input-Felder (Vorder- und Rückseite)
@@ -104,21 +106,28 @@ export default function Sidebar() {
   const [exportName, setExportName] = useState("");
   const [exporting, setExporting] = useState(false);
 
+  const [recordingState, setRecordingState] = useState<"idle" | "recording" | "preview">("idle");
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
+
   const [areaKind, setAreaKind] = useState<AreaKind>("text");
   const [areaAnchor, setAreaAnchor] = useState<AreaAnchor>("center");
   const [areaShapeId, setAreaShapeId] = useState<string | undefined>(undefined);
   const [areaText, setAreaText] = useState("");
   const [areaImageDataUrl, setAreaImageDataUrl] = useState<string | undefined>(undefined);
+  const [areaVideoUrl, setAreaVideoUrl] = useState<string | undefined>(undefined);
   const [areaGrayscale, setAreaGrayscale] = useState(false);
   const [areaTextStyle, setAreaTextStyle] = useState<TextStyleName>("title");
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const allowImageAreas = !NO_IMAGE_AREA_FORMATS.includes(format);
-  const availableAreaKinds = allowImageAreas ? AREA_KINDS : AREA_KINDS.filter((k) => k !== "image");
+  const availableAreaKinds = allowImageAreas
+    ? AREA_KINDS
+    : AREA_KINDS.filter((k) => k !== "image" && k !== "video");
 
   useEffect(() => {
-    if (!allowImageAreas && areaKind === "image") setAreaKind("text");
+    if (!allowImageAreas && areaKind !== "text") setAreaKind("text");
   }, [allowImageAreas, areaKind]);
 
   // "Hintergrund" gibt es nur für Bild-Areas; bei Text zurück auf eine Position.
@@ -134,10 +143,20 @@ export default function Sidebar() {
     reader.readAsDataURL(file);
   }
 
+  // Videos werden (anders als Bilder) nicht als Base64-Data-URL eingelesen –
+  // bei Videodateien wäre das unnötig speicherintensiv. Eine Object-URL
+  // reicht, da die Area nur für die laufende Sitzung im Speicher lebt.
+  function handleAreaVideoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAreaVideoUrl(URL.createObjectURL(file));
+  }
+
   function resetAreaForm() {
     setAreaText("");
     setAreaShapeId(undefined);
     setAreaImageDataUrl(undefined);
+    setAreaVideoUrl(undefined);
     setAreaGrayscale(false);
     setAreaTextStyle("title");
     setEditingAreaId(null);
@@ -162,6 +181,7 @@ export default function Sidebar() {
     setAreaText(area.text ?? "");
     setAreaShapeId(area.shapeId);
     setAreaImageDataUrl(area.imageDataUrl);
+    setAreaVideoUrl(area.videoUrl);
     setAreaGrayscale(!!area.grayscale);
     setAreaTextStyle(area.style ?? "title");
   }
@@ -182,7 +202,7 @@ export default function Sidebar() {
       } else {
         addArea(payload);
       }
-    } else {
+    } else if (areaKind === "image") {
       if (!areaImageDataUrl) return;
       const payload =
         areaAnchor === "background"
@@ -203,6 +223,33 @@ export default function Sidebar() {
               grayscale: areaGrayscale,
               side: formatHasSides ? side : undefined,
               ...DEFAULT_IMAGE_AREA_SIZE,
+            };
+      if (editingAreaId) {
+        updateArea(editingAreaId, { ...payload, x: undefined, y: undefined });
+      } else {
+        addArea(payload);
+      }
+    } else {
+      if (!areaVideoUrl) return;
+      const payload =
+        areaAnchor === "background"
+          ? {
+              // Hintergrund-Video: keine Maske/Shape nötig, füllt den ganzen Rahmen.
+              kind: "video" as const,
+              anchor: "background" as const,
+              videoUrl: areaVideoUrl,
+              grayscale: areaGrayscale,
+              side: formatHasSides ? side : undefined,
+              ...DEFAULT_VIDEO_AREA_SIZE,
+            }
+          : {
+              kind: "video" as const,
+              anchor: areaAnchor,
+              shapeId: areaShapeId,
+              videoUrl: areaVideoUrl,
+              grayscale: areaGrayscale,
+              side: formatHasSides ? side : undefined,
+              ...DEFAULT_VIDEO_AREA_SIZE,
             };
       if (editingAreaId) {
         updateArea(editingAreaId, { ...payload, x: undefined, y: undefined });
@@ -277,6 +324,35 @@ export default function Sidebar() {
       const suffix = hasSides(format) ? `_${side}` : "";
       saveAs(blob, `${filename}${suffix}.png`);
     }
+  }
+
+  function handleStartRecording() {
+    if (!exportRegistry.startRecording || recordingState !== "idle") return;
+    if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+    setRecordedBlob(null);
+    setRecordedUrl(null);
+    exportRegistry.startRecording({ fps: 30 });
+    setRecordingState("recording");
+  }
+
+  async function handleStopRecording() {
+    if (!exportRegistry.stopRecording || recordingState !== "recording") return;
+    const blob = await exportRegistry.stopRecording();
+    setRecordedBlob(blob);
+    setRecordedUrl(URL.createObjectURL(blob));
+    setRecordingState("preview");
+  }
+
+  function handleDiscardRecording() {
+    if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+    setRecordedBlob(null);
+    setRecordedUrl(null);
+    setRecordingState("idle");
+  }
+
+  function handleDownloadRecordingWebm() {
+    if (!recordedBlob) return;
+    saveAs(recordedBlob, `${exportName.trim() || "recording"}.webm`);
   }
 
   const colors = [...DEFAULT_COLORS, ...customColors.map((hex) => ({ id: hex, hex }))];
@@ -440,7 +516,7 @@ export default function Sidebar() {
                       : "bg-primary-lightgrey text-primary-darkgrey hover:opacity-80"
                   }`}
                 >
-                  {kind === "text" ? "Text" : "Bild"}
+                  {AREA_KIND_LABELS[kind]}
                 </button>
               ))}
             </div>
@@ -450,7 +526,7 @@ export default function Sidebar() {
               key={areaKind}
               label="Choose"
               value={areaAnchor === "background" ? BACKGROUND_LABEL : ANCHOR_LABELS[areaAnchor]}
-              fields={areaKind === "image" ? [...ANCHOR_OPTIONS, BACKGROUND_LABEL] : ANCHOR_OPTIONS}
+              fields={areaKind !== "text" ? [...ANCHOR_OPTIONS, BACKGROUND_LABEL] : ANCHOR_OPTIONS}
               onChange={(label) => setAreaAnchor(labelToAnchor(label))}
             />
           </RulerItem>
@@ -469,7 +545,7 @@ export default function Sidebar() {
                 />
               </RulerItem>
             </>
-          ) : (
+          ) : areaKind === "image" ? (
             <>
               {areaAnchor !== "background" && (
                 <RulerItem label="Shape">
@@ -516,6 +592,38 @@ export default function Sidebar() {
                 ))}
               </div>
             </>
+          ) : (
+            <>
+              {areaAnchor !== "background" && (
+                <RulerItem label="Shape">
+                  <Dropdown
+                    label="Choose"
+                    value={shapes.find((s) => s.id === areaShapeId)?.label ?? NO_SHAPE_LABEL}
+                    fields={SHAPE_OPTIONS}
+                    onChange={(label) => setAreaShapeId(labelToShapeId(label))}
+                  />
+                </RulerItem>
+              )}
+              <RulerItem label="Video">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="video/*"
+                  className="hidden"
+                  onChange={handleAreaVideoChange}
+                />
+                <Button
+                  text={areaVideoUrl ? "Video gewählt" : "Upload"}
+                  color="grey"
+                  onClick={() => fileInputRef.current?.click()}
+                />
+                <Button
+                  text="B&W"
+                  color={areaGrayscale ? "colored" : "grey"}
+                  onClick={() => setAreaGrayscale((prev) => !prev)}
+                />
+              </RulerItem>
+            </>
           )}
 
           <div className="flex flex-col w-full items-center gap-2 px-2 mt-2">
@@ -540,11 +648,11 @@ export default function Sidebar() {
                   }`}
                 >
                   <span className="truncate">
-                    {area.kind === "text" ? "Text" : "Bild"} ·{" "}
+                    {AREA_KIND_LABELS[area.kind]} ·{" "}
                     {area.anchor === "background" ? BACKGROUND_LABEL : ANCHOR_LABELS[area.anchor]}
                     {area.kind === "text" ? `: ${area.text}` : ""}
                   </span>
-                  {area.kind === "image" && (
+                  {(area.kind === "image" || area.kind === "video") && (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -654,7 +762,7 @@ export default function Sidebar() {
           </RulerItem>
           <RulerItem label="Loop">
             <Inputfield
-              placeholder="9"
+              placeholder="5.5"
               unit="S"
               value={String(loopDuration)}
               onChange={(v) => setLoopDuration(Math.max(1, Number(v) || 0))}
@@ -670,6 +778,40 @@ export default function Sidebar() {
             />
           </div>
         </RulerSection>
+
+        {format === "Video" && (
+          <>
+            <SeparationLine/>
+            <RulerSection heading="Recording">
+              <div className="flex flex-col w-full items-center gap-2 px-2">
+                {recordingState === "idle" && (
+                  <Button size="sm" text="Record" onClick={handleStartRecording} />
+                )}
+                {recordingState === "recording" && (
+                  <>
+                    <span className="text-xs text-primary-darkgrey">Recording…</span>
+                    <Button size="sm" text="Stop" color="white" onClick={handleStopRecording} />
+                  </>
+                )}
+                {recordingState === "preview" && recordedUrl && (
+                  <>
+                    <video
+                      src={recordedUrl}
+                      controls
+                      className="w-full rounded-sm"
+                    />
+                    <Button
+                      size="sm"
+                      text="Re-record"
+                      color="grey"
+                      onClick={handleDiscardRecording}
+                    />
+                  </>
+                )}
+              </div>
+            </RulerSection>
+          </>
+        )}
 
         <SeparationLine/>
 
@@ -702,6 +844,17 @@ export default function Sidebar() {
             </RulerItem>
           )}
         </RulerSection>
+
+        {format === "Video" && recordedBlob && (
+          <div className="flex flex-col w-full items-center gap-2 mb-2">
+            <Button
+              size="sm"
+              text="Download WebM"
+              color="grey"
+              onClick={handleDownloadRecordingWebm}
+            />
+          </div>
+        )}
 
         <div className="flex flex-col w-full items-center">
           <Button
