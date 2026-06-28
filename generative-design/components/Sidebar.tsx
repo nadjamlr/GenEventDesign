@@ -654,7 +654,7 @@ export default function Sidebar() {
           </RulerItem>
           <RulerItem label="Loop">
             <Inputfield
-              placeholder="4"
+              placeholder="9"
               unit="S"
               value={String(loopDuration)}
               onChange={(v) => setLoopDuration(Math.max(1, Number(v) || 0))}
