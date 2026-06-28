@@ -22,6 +22,18 @@ export type ShapeImageProvider = {
     targetSize?: number,
     time?: number
   ) => p5Types.Image | undefined;
+  /**
+   * Dasselbe Punkt-/Linien-Gitter wie in den Shapes, aber als freies
+   * Rechteck (kein Shape-Umriss) mit Aussparungen (excludeRects) – für den
+   * Hintergrund, wenn keine Shape ausgewählt ist (siehe noShapesAvailable).
+   */
+  getPatternFill?: (
+    w: number,
+    h: number,
+    colorHex: string,
+    excludeRects: { x: number; y: number; w: number; h: number }[],
+    time?: number
+  ) => p5Types.Image | undefined;
 };
 
 export type LogoVariantImages = {
@@ -86,6 +98,12 @@ const AREA_PAD_RATIO = 0.015; // Innenabstand einer Text-Area um den eigentliche
 const IMAGE_SHAPE_BLEED_RATIO = 0.1; // Wie weit Shapes an jeder Seite in eine Bild-Area hineinragen dürfen, relativ zu deren Breite
 const MIN_GAP_RATIO = 0.8; // Mindestabstand zwischen Mittelpunkten, relativ zur Summe der halben Größen – kleiner erlaubt mehr Überlappung (Tiefe), größer verhindert sie stärker
 const MAX_PLACEMENT_ATTEMPTS = 24; // Versuche pro Element, eine Position mit genug Abstand zu Nachbarn zu finden
+const MIN_PLACEMENT_COUNT = 10; // Mindestanzahl an Elementen, unabhängig von columns*rows (siehe count weiter unten) – bei z.B. 1x1 oder 2x2 wären sonst nur 1-4 riesige Shapes im Spiel, die eine zentrierte Sperrzone (Logo/Area) leicht komplett blockieren kann; mehr, kleinere Shapes haben deutlich bessere Chancen, irgendwo frei zu passen
+
+// Diagnose: loggt pro Komposition (Seed+Seite) einmalig Anordnung/Instanz-
+// Anzahl in die Konsole (siehe drawGrid), statt bei jedem Animations-Frame zu
+// spammen – nur ein neuer Wert (z.B. nach "Shuffle") löst einen neuen Log aus.
+let lastLoggedCompositionKey: string | undefined;
 
 const TAU = Math.PI * 2;
 
@@ -577,9 +595,23 @@ export function drawGrid(p5: p5Types, params: Params) {
   }
 
   // Spalten/Zeilen steuern die Gesamtdichte; baseUnit ist die typische
-  // Elementgröße, abgeleitet aus Fläche / Anzahl.
-  const count = Math.max(1, columns * rows);
+  // Elementgröße, abgeleitet aus Fläche / Anzahl. rawCount (das eigentliche
+  // columns*rows, ungefedert) bleibt für die Opazitäts-Abschwächung unten
+  // erhalten – count selbst ist nach unten mit MIN_PLACEMENT_COUNT abgefedert
+  // (siehe dort), damit bei z.B. 1x1 oder 2x2 trotzdem genug, kleinere Shapes
+  // platziert werden, statt nur 1-4 riesige, die eine Sperrzone leicht
+  // komplett blockieren kann.
+  const rawCount = Math.max(1, columns * rows);
+  const count = Math.max(MIN_PLACEMENT_COUNT, rawCount);
   const baseUnit = Math.sqrt((innerW * innerH) / count);
+
+  // Bei einer vom Nutzer wirklich niedrig eingestellten Spalten/Zeilen-Zahl
+  // sollen die (jetzt zahlreicheren, kleineren) Shapes trotzdem noch nach
+  // "wenige große Akzente" aussehen statt nach einer dichten Komposition –
+  // dafür unterhalb von 6 die Deckkraft graduell absenken (0.55 bei
+  // rawCount=1 bis 1.0 ab rawCount=6), basierend auf der eingestellten
+  // (ungefederten) Zahl, nicht der tatsächlichen Platzierungs-Anzahl.
+  const lowDensityOpacity = Math.min(1, 0.55 + 0.45 * Math.min(1, rawCount / 6));
 
   // Anordnung schon hier bestimmen (nur seedabhängig), damit die Logo-Sperrzone
   // um die maximale Bewegungsweite DIESER Anordnung vergrößert werden kann – so
@@ -596,10 +628,18 @@ export function drawGrid(p5: p5Types, params: Params) {
   const arrangement = ARRANGEMENTS[Math.abs(hashString(`arrangement|${seedParam}`)) % ARRANGEMENTS.length];
 
   // Bewegungspuffer entsprechend der animierten Verschiebung in motionFor
-  // (scatter/border/rings bewegen sich nicht -> 0).
+  // (scatter/border/rings bewegen sich nicht -> 0). Im Einfliegen-Modus (siehe
+  // flyInEnabled weiter unten – hier identisch vorab ausgewertet, da der Wert
+  // erst später im Code gebraucht wird) bleiben Shapes nach der Landung exakt
+  // an ihrer Position stehen (keine fortlaufende Eigenbewegung mehr), der
+  // Puffer ist dann unnötig und würde nur unnötig Fläche um das Logo sperren
+  // – gerade bei wenigen Spalten/Zeilen (große Zellen) kann das sonst dazu
+  // führen, dass kaum noch Platz für Shapes übrig bleibt.
+  const flyInEnabledForMargin = Math.abs(hashString(`flyin|${seedParam}`)) % 4 !== 0;
   const waveRowsN = Math.max(1, Math.round(Math.sqrt(count)));
-  const logoMotionMargin =
-    arrangement === "wave"
+  const logoMotionMargin = flyInEnabledForMargin
+    ? 0
+    : arrangement === "wave"
       ? (innerH / waveRowsN) * 0.6
       : arrangement === "diagonal"
         ? baseUnit * 0.45
@@ -671,8 +711,22 @@ export function drawGrid(p5: p5Types, params: Params) {
   // nicht mehrere unterschiedliche Muster gleichzeitig. Ist das volle Logo
   // aktiv (alle Shapes ausgewählt), bleibt der Kombinations-Modus aus, damit
   // dann wirklich nur das Logo erscheint und keine einzelnen Buchstaben-Teile.
-  const comboModeEnabled = !allShapesSelected && Math.abs(hashString(`combo|${seedParam}`)) % 3 === 0;
-  const chosenCombo = SHAPE_COMBOS[Math.abs(hashString(`comboChoice|${seedParam}`)) % SHAPE_COMBOS.length];
+  // Außerdem dürfen nur Kombinationen verwendet werden, deren Teile AUSSCHLIESS-
+  // LICH vom Nutzer ausgewählte Shapes sind – die 15 Kombinationen sind fest
+  // aus allen 6 Basis-Shapes vordefiniert, ohne diesen Filter würde z.B. bei
+  // Auswahl von nur "R" trotzdem gelegentlich eine "Y1+Y2"-Kombination
+  // erscheinen, weil chosenCombo komplett unabhängig von selectedShapes
+  // gewählt wurde.
+  const availableShapeIdSet = new Set(availableShapes);
+  const compatibleCombos = SHAPE_COMBOS.filter((combo) =>
+    combo.every((part) => availableShapeIdSet.has(part.shapeId))
+  );
+  const comboModeEnabled =
+    !allShapesSelected && compatibleCombos.length > 0 && Math.abs(hashString(`combo|${seedParam}`)) % 3 === 0;
+  const chosenCombo =
+    compatibleCombos.length > 0
+      ? compatibleCombos[Math.abs(hashString(`comboChoice|${seedParam}`)) % compatibleCombos.length]
+      : SHAPE_COMBOS[0];
   // "Einfliegen"-Animation: eigener, von der Anordnung unabhängiger
   // Bewegungs-Modus (siehe shapeFlyIn.ts) – ersetzt statt überlagert die
   // Anordnungs-spezifische Bewegung aus shapeAnimation.ts, wenn aktiv. Das
@@ -858,8 +912,15 @@ export function drawGrid(p5: p5Types, params: Params) {
   // Eine Shape pro Zelle, kantenbündig, mit zufälliger 90°-Drehung – die
   // Shapes verbinden sich zu durchgehenden Formen.
   function placeGrid(): Instance[] {
-    const cols = Math.max(1, Math.round(columns));
-    const rowsCount = Math.max(1, Math.round(rows));
+    // Ziel-Zellenzahl statt der rohen columns*rows verwenden (count ist
+    // bereits mit MIN_PLACEMENT_COUNT nach unten abgefedert) – das
+    // Seitenverhältnis von columns:rows bleibt dabei erhalten, nur die
+    // Gesamtzahl (und damit Zellengröße) wird bei sehr niedrigen Werten
+    // angehoben, damit nicht 1-4 riesige Zellen entstehen, die eine
+    // Sperrzone leicht komplett verschlucken kann.
+    const ratio = Math.max(0.1, columns / Math.max(1, rows));
+    const cols = Math.max(1, Math.round(Math.sqrt(count * ratio)));
+    const rowsCount = Math.max(1, Math.round(count / cols));
     const cw = innerW / cols;
     const ch = innerH / rowsCount;
     const cell = Math.min(cw, ch);
@@ -869,9 +930,16 @@ export function drawGrid(p5: p5Types, params: Params) {
       for (let c = 0; c < cols; c++) {
         const x = c * cw;
         const y = r * ch;
-        if (exclusionRects.some((a) => rectsOverlap(x, y, cw, ch, a.x, a.y, a.w, a.h))) continue;
         const cx = x + cw / 2;
         const cy = y + ch / 2;
+        // Gegen die tatsächliche Shape-Fläche (size=cell, zentriert) prüfen,
+        // nicht gegen die volle, rohe Rasterzelle (cw×ch) – bei wenigen
+        // Spalten/Zeilen ist eine Zelle riesig (z.B. 1/4 der Canvas bei einem
+        // 2x2-Raster) und würde schon bei der kleinsten Berührung mit der
+        // zentrierten Logo-Sperrzone GANZ verworfen, obwohl die viel kleinere
+        // Shape selbst locker daneben passen würde – das ließ bei wenigen
+        // Spalten/Zeilen oft die ganze Canvas leer wirken.
+        if (intersectsExclusion(cx, cy, cell)) continue;
         const shapeId = pickShape();
         result.push({
           idx: i++,
@@ -1147,7 +1215,52 @@ export function drawGrid(p5: p5Types, params: Params) {
     border: placeBorder,
     packing: placePacking,
   };
-  const instances = (placers[arrangement] ?? placeScatter)();
+  // Ist gar keine Shape ausgewählt (oder verfügbar), wird gar nicht erst
+  // platziert – sonst hätte jede Instanz ein undefined shapeId und würde
+  // als grauer/farbiger Kreis "ersatzweise" gezeichnet (siehe der else-Zweig
+  // weiter unten bei `if (img) {...} else {...}`). Stattdessen bleibt die
+  // Fläche entweder leer (nur Hintergrundfarbe) oder bekommt das freie
+  // Punkt-Muster als Hintergrund (siehe noShapesAvailable weiter unten).
+  const noShapesAvailable = availableShapes.length === 0;
+
+  // Fallback: manche Anordnungen (v.a. "grid" mit wenigen Spalten/Zeilen)
+  // rastern in WENIGE, große Zellen – überlappt die Logo-/Area-Sperrzone dann
+  // jede einzelne Zelle (z.B. zentriertes Logo bei einem 2x2-Raster), bleiben
+  // ALLE Zellen ausgeschlossen und die Canvas zeigt gar keine Shapes mehr.
+  // placeScatter() platziert dagegen frei im ganzen Feld (mit Ausweich-
+  // Versuchen statt fixer Zellen) und scheitert dadurch praktisch nie
+  // komplett – als Sicherheitsnetz, falls die gewählte Anordnung 0 Instanzen
+  // liefert.
+  let instances: Instance[] = noShapesAvailable ? [] : (placers[arrangement] ?? placeScatter)();
+  // Schwelle statt nur "0": placeScatter() prüft die Sperrzone gegen die
+  // tatsächliche Shape-Größe (mit freiem Ausweich-Versuch im ganzen Feld),
+  // andere Anordnungen können bei wenigen Spalten/Zeilen aber auch "fast
+  // leer" enden (z.B. nur 1 von 4 Rasterzellen frei) ohne exakt auf 0 zu
+  // fallen – dann lieber auf Scatter wechseln statt eine kaum sichtbare
+  // Komposition zu zeigen.
+  if (!noShapesAvailable && instances.length < count * 0.5 && arrangement !== "scatter") {
+    instances = placeScatter();
+  }
+
+  if (typeof window !== "undefined" && lastLoggedCompositionKey !== `${seedParam}|${activeSide ?? ""}`) {
+    lastLoggedCompositionKey = `${seedParam}|${activeSide ?? ""}`;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[grid] seed=${seedParam} side=${activeSide ?? "-"} arrangement=${arrangement} instances=${instances.length} flyIn=${flyInEnabled} combo=${comboModeEnabled}(${chosenCombo.map((p) => p.shapeId).join("+")}) allShapesSelected=${allShapesSelected} selectedShapes=[${selectedShapes.join(",")}] availableShapes=[${availableShapes.join(",")}] logo(enabled=${logoEnabled},hasImage=${logoHasImage},box=${logoBox ? "yes" : "no"})`
+    );
+    const usedShapeIds = Array.from(new Set(instances.map((i) => i.shapeId).filter((id): id is string => !!id)));
+    const leaked = usedShapeIds.filter((id) => !availableShapeIdSet.has(id));
+    if (leaked.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[grid] seed=${seedParam} side=${activeSide ?? "-"}: Instanzen mit NICHT verfügbaren shapeIds gerendert: [${leaked.join(",")}] (availableShapes=[${availableShapes.join(",")}])`
+      );
+    }
+    if (instances.length === 0) {
+      // eslint-disable-next-line no-console
+      console.warn(`[grid] seed=${seedParam} side=${activeSide ?? "-"}: 0 Instanzen auch nach Scatter-Fallback!`);
+    }
+  }
 
   // Schema-Zwang für Farbe/Opazität: nur "scatter" bleibt der bewusst freie,
   // organische Random-Modus (Farbe/Opazität folgen dort weiterhin dem
@@ -1244,6 +1357,32 @@ export function drawGrid(p5: p5Types, params: Params) {
     }
   }
 
+  // Ist gar keine Shape ausgewählt, wird statt einzelner Kreis-Ersatz-Shapes
+  // (siehe sonst der else-Zweig bei "if (img) {...} else {...}" weiter unten)
+  // pro Komposition zufällig entweder das freie Punkt-/Linien-Muster (wie in
+  // den Shapes, aber ohne Umriss) als Hintergrund gezeigt – mit denselben
+  // Aussparungen wie sonst die Shapes (exclusionRects: Logo/Areas/Text/
+  // Eingabefelder) – oder die Fläche bleibt ganz leer (nur Hintergrundfarbe,
+  // die schon oben gesetzt ist).
+  if (noShapesAvailable) {
+    const showPattern = Math.abs(hashString(`noshapebg|${seedParam}`)) % 2 === 0;
+    if (showPattern && shapeImages?.getPatternFill) {
+      const patternColorPool = colorPool.length > 0 ? colorPool : [FALLBACK_COLOR];
+      const patternColor = patternColorPool[Math.floor(rng() * patternColorPool.length)];
+      const patternImg = shapeImages.getPatternFill(
+        innerW,
+        innerH,
+        patternColor,
+        exclusionRects,
+        animate ? phase : undefined
+      );
+      if (patternImg) {
+        p5.imageMode(p5.CORNER);
+        p5.image(patternImg, innerX, innerY, innerW, innerH);
+      }
+    }
+  }
+
   // p5.tint() + image() ist im 2D-Renderer dieser p5-Version kaputt (siehe
   // Kommentar bei getTintedImage in Canvas.tsx) – Transparenz wird deshalb
   // direkt über den Canvas-Context (globalAlpha) gesetzt, das betrifft sowohl
@@ -1269,7 +1408,7 @@ export function drawGrid(p5: p5Types, params: Params) {
     // Transparenz-Bänder während der Animation stabil stehen bleiben statt
     // mit der Shape mitzuwandern/zu flackern. Im Einfliegen-Modus kommt noch
     // der Fade-in/-out-Faktor aus motionFor dazu (siehe opacityMul).
-    const opacity = (inst.opacityOverride ?? fieldOpacity(cx, cy)) * (m.opacityMul ?? 1);
+    const opacity = (inst.opacityOverride ?? fieldOpacity(cx, cy)) * (m.opacityMul ?? 1) * lowDensityOpacity;
 
     // Kombinations-Modus (zusätzliche Option, siehe comboModeEnabled): statt
     // einer einzelnen Shape wird überall dieselbe, einmal pro Komposition

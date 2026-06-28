@@ -110,7 +110,7 @@ type DotGridOptions = {
 
 function drawDotGrid(
   ctx: CanvasRenderingContext2D,
-  raw: HTMLImageElement,
+  raw: HTMLImageElement | undefined,
   w: number,
   h: number,
   opts: DotGridOptions
@@ -175,13 +175,39 @@ function drawDotGrid(
     }
   }
 
-  // Gitter auf die Shape-Silhouette beschneiden.
-  ctx.globalCompositeOperation = "destination-in";
-  ctx.drawImage(raw, 0, 0, w, h);
-  ctx.globalCompositeOperation = "source-over";
+  // Gitter auf die Shape-Silhouette beschneiden (nur wenn eine Shape
+  // übergeben wurde – beim freien Hintergrund-Muster (siehe getPatternFillImage)
+  // gibt es keine Silhouette, das Gitter bleibt dann einfach rechteckig
+  // ungeclippt, weil der Aufrufer den Clip selbst per Pfad gesetzt hat).
+  if (raw) {
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.drawImage(raw, 0, 0, w, h);
+    ctx.globalCompositeOperation = "source-over";
+  }
 }
 
-// Zeichnet nur das ausgewählte Logo/Icon (in Schwarz, auf das weiße Shirt)
+// Mittelt die Helligkeit einiger Stichproben-Pixel in einem Bereich (gleiche
+// Idee wie sampleBrightness in grid.ts, hier lokal, da das Produktfoto schon
+// vor diesem Aufruf in `target` gezeichnet wurde).
+function sampleRegionBrightness(target: p5, x: number, y: number, w: number, h: number): number {
+  const samples = 5;
+  let total = 0;
+  let count = 0;
+  for (let i = 0; i < samples; i++) {
+    for (let j = 0; j < samples; j++) {
+      const sx = Math.round(x + (w * (i + 0.5)) / samples);
+      const sy = Math.round(y + (h * (j + 0.5)) / samples);
+      if (sx < 0 || sy < 0 || sx >= target.width || sy >= target.height) continue;
+      const c = target.get(sx, sy) as number[];
+      total += 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+      count++;
+    }
+  }
+  return count > 0 ? total / count : 255;
+}
+
+// Zeichnet nur das ausgewählte Logo/Icon, passend zum Untergrund des
+// jeweiligen Produktfotos eingefärbt (schwarz auf hell, weiß auf dunkel) –
 // zentriert in die übergebene Region – für "logo"-Mockup-Panels.
 function drawLogoOnly(
   target: p5,
@@ -195,7 +221,8 @@ function drawLogoOnly(
   if (!logoEnabled || !logoImages) return;
   const variant = logoMode === "random" ? (Math.abs(seed) % 2 === 0 ? "logo" : "icon") : logoMode;
   const vi = logoImages[variant];
-  const img = vi?.black ?? vi?.white;
+  const brightness = sampleRegionBrightness(target, rx, ry, rw, rh);
+  const img = brightness > 140 ? vi?.black ?? vi?.white : vi?.white ?? vi?.black;
   if (!img) return;
   const fit = Math.min(rw / img.width, rh / img.height);
   const dw = img.width * fit;
@@ -550,6 +577,39 @@ export default function Canvas() {
       const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext;
       drawDotGrid(ctx, raw, w, h, buildOptions(time));
       animFrameCache.set(key, pImg);
+      return pImg;
+    }
+
+    // Freies Hintergrund-Muster (kein Shape-Umriss): dasselbe Punkt-/Linien-
+    // Gitter wie in den Shapes, aber über eine ganze Rechteck-Fläche – mit
+    // "Löchern" für Logo/Areas/Text (excludeRects), per evenodd-Clip statt
+    // Silhouette. Wird gezeigt, wenn keine Shape ausgewählt ist (siehe
+    // noShapesAvailable in grid.ts), als Alternative zum sonstigen
+    // Kreis-Fallback pro Instanz.
+    function getPatternFillImage(
+      p: p5,
+      w: number,
+      h: number,
+      colorHex: string,
+      excludeRects: { x: number; y: number; w: number; h: number }[],
+      time?: number
+    ): p5.Image {
+      const { gridResolution, dotSize, dotVariation, seed: globalSeed } = paramsRef.current;
+      const cellCount = resolutionToCellCount(gridResolution);
+      const dotRatio = dotSizeToRatio(dotSize);
+      const variation = sliderToAmount(dotVariation);
+      const seed = strSeed(`__bgpattern__|${colorHex}|${globalSeed}`);
+      const pImg = p.createImage(w, h);
+      const ctx = (pImg as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, w, h);
+      for (const r of excludeRects) {
+        ctx.rect(r.x, r.y, r.w, r.h);
+      }
+      ctx.clip("evenodd");
+      drawDotGrid(ctx, undefined, w, h, { baseColor: colorHex, cellCount, dotRatio, variation, seed, phase: time });
+      ctx.restore();
       return pImg;
     }
 
@@ -913,6 +973,8 @@ export default function Canvas() {
         isReady: (id) => rawImages.has(id),
         getImage: (id, colorHex, targetSize, time) =>
           getTintedImage(p, id, colorHex, targetSize, paramsRef.current.gridResolution, paramsRef.current.dotSize, time),
+        getPatternFill: (w, h, colorHex, excludeRects, time) =>
+          getPatternFillImage(p, w, h, colorHex, excludeRects, time),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(p, area, w, h),
@@ -931,12 +993,26 @@ export default function Canvas() {
         loadLogoVariant(p, "/logoShapes/Logo_NRLY_White.svg", (img) => {
           logoImages.logo!.white = img;
         });
-        loadLogoVariant(p, "/logoShapes/Logo_NRLY_Icon_Black.png", (img) => {
-          logoImages.icon!.black = img;
-        });
         loadLogoVariant(p, "/logoShapes/Logo_NRLY_Icon_White.svg", (img) => {
           logoImages.icon!.white = img;
         });
+        // Es gibt keine eigene schwarze Icon-Datei (anders als beim vollen
+        // Logo) – ohne sie würde der Kontrast-Fallback (`vi?.black ?? vi?.white`)
+        // auf hellem Untergrund fälschlich das weiße Icon zeigen. Die SVG
+        // enthält nur "fill/stroke white"-Pfade, daher reicht ein einfaches
+        // Text-Replace, um daraus zur Laufzeit eine schwarze Variante
+        // abzuleiten, statt eine zweite Datei pflegen zu müssen.
+        fetch("/logoShapes/Logo_NRLY_Icon_White.svg")
+          .then((res) => res.text())
+          .then((svgText) => {
+            const blackSvg = svgText.replace(/white/g, "black");
+            const blobUrl = URL.createObjectURL(new Blob([blackSvg], { type: "image/svg+xml" }));
+            loadLogoVariant(p, blobUrl, (img) => {
+              logoImages.icon!.black = img;
+              URL.revokeObjectURL(blobUrl);
+            });
+          })
+          .catch(() => {});
 
         canvasElt.addEventListener("mousedown", handleMouseDown);
         window.addEventListener("mousemove", handleMouseMove);
@@ -1022,6 +1098,8 @@ export default function Canvas() {
         isReady: (id) => rawImages.has(id),
         getImage: (id, colorHex, targetSize, time) =>
           getTintedImage(instance, id, colorHex, targetSize, gridResolution, dotSize, time),
+        getPatternFill: (w, h, colorHex, excludeRects, time) =>
+          getPatternFillImage(instance, w, h, colorHex, excludeRects, time),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
@@ -1086,6 +1164,8 @@ export default function Canvas() {
         isReady: (id) => rawImages.has(id),
         getImage: (id, colorHex, targetSize, time) =>
           getTintedImage(instance, id, colorHex, targetSize, params.gridResolution, params.dotSize, time),
+        getPatternFill: (w, h, colorHex, excludeRects, time) =>
+          getPatternFillImage(instance, w, h, colorHex, excludeRects, time),
       };
       const areaImagesLocal: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
@@ -1204,6 +1284,8 @@ export default function Canvas() {
         isReady: (id) => rawImages.has(id),
         getImage: (id, colorHex, targetSize, time) =>
           getTintedImage(instance, id, colorHex, targetSize, params.gridResolution, params.dotSize, time),
+        getPatternFill: (w, h, colorHex, excludeRects, time) =>
+          getPatternFillImage(instance, w, h, colorHex, excludeRects, time),
       };
       const areaImagesLocal: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),

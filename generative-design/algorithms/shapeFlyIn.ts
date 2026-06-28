@@ -104,8 +104,14 @@ function easeOutTail(u: number): number {
 function presence(t: number, off: number, speed: number, loopDurationSeconds: number): number {
   const loop = Math.max(0.1, loopDurationSeconds);
   // Adaptiv: HOLD füllt den Rest der Loop nach dem festen Enter+Exit-Budget,
-  // statt eine feste Sekundenzahl zu sein (siehe MIN_HOLD_SECONDS oben).
-  const transitBudget = ENTER_SPREAD_SECONDS + ENTER_FLIGHT_SECONDS + EXIT_SPREAD_SECONDS + EXIT_FLIGHT_SECONDS;
+  // statt eine feste Sekundenzahl zu sein (siehe MIN_HOLD_SECONDS oben). Das
+  // Budget rechnet mit der LANGSAMSTEN möglichen Flugzeit (ENTER_FLIGHT/EXIT_
+  // FLIGHT geteilt durch MIN_SPEED, nicht die Standard-Flugzeit) – sonst kann
+  // ein langsames UND spät gestaffeltes Element (hohes off) über das Loop-
+  // Ende hinaus fliegen wollen und an der Naht abrupt verschwinden ("poppen"),
+  // statt seinen Ausflug sichtbar zu Ende zu bringen.
+  const transitBudget =
+    ENTER_SPREAD_SECONDS + ENTER_FLIGHT_SECONDS / MIN_SPEED + EXIT_SPREAD_SECONDS + EXIT_FLIGHT_SECONDS / MIN_SPEED;
   const holdSeconds = Math.max(MIN_HOLD_SECONDS, loop - transitBudget);
   const enterSpread = ENTER_SPREAD_SECONDS / loop;
   const enterDuration = ENTER_FLIGHT_SECONDS / speed / loop;
