@@ -38,6 +38,10 @@ export type FormatSize = {
   sideLayout?: "row" | "column";
   /** Produkt-Mockup-Panels (eines oder mehrere nebeneinander). */
   mockups?: MockupPanel[];
+  /** false = Format hat keine frei platzierbaren Areas (Text/Bild/Video) –
+   *  z.B. weil das Layout (Business Card, Ticket, Voucher) schon über feste
+   *  Eingabefelder funktioniert. Default true. */
+  supportsAreas?: boolean;
 };
 
 export const FORMAT_SIZES: Record<string, FormatSize> = {
@@ -46,9 +50,16 @@ export const FORMAT_SIZES: Record<string, FormatSize> = {
   // DIN lang: 105 x 210 mm
   Flyer: { width: 500, height: 1000, defaultExportType: "pdf", hasSides: true, sideLayout: "row" },
   Video: { width: 1920, height: 1080 },
-  "Business Card": { width: 648, height: 1000, defaultExportType: "pdf", hasSides: true, sideLayout: "row" },
-  Ticket: { width: 1000, height: 400, defaultExportType: "pdf", hasSides: true },
-  Voucher: { width: 1000, height: 500, defaultExportType: "pdf", hasSides: true },
+  "Business Card": {
+    width: 648,
+    height: 1000,
+    defaultExportType: "pdf",
+    hasSides: true,
+    sideLayout: "row",
+    supportsAreas: false,
+  },
+  Ticket: { width: 1000, height: 400, defaultExportType: "pdf", hasSides: true, supportsAreas: false },
+  Voucher: { width: 1000, height: 500, defaultExportType: "pdf", hasSides: true, supportsAreas: false },
   Sticker: { width: 800, height: 800, defaultExportType: "png" },
   Skateboard: { width: 250, height: 1000, cornerRadius: 110, defaultExportType: "pdf" },
   // Zwei weiße T-Shirts nebeneinander (je 1200×1500). Links nur das Logo/Icon,
@@ -84,4 +95,8 @@ export function hasSides(format: string): boolean {
 
 export function getSideLayout(format: string): "row" | "column" {
   return FORMAT_SIZES[format]?.sideLayout ?? "column";
+}
+
+export function formatSupportsAreas(format: string): boolean {
+  return FORMAT_SIZES[format]?.supportsAreas ?? true;
 }

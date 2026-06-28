@@ -3,7 +3,7 @@ import { shapes as ALL_SHAPES, FULL_LOGO_SHAPE_ID, SHAPE_COMBOS } from "@/lib/sh
 import { getLogoZones, getAnchorBox, ALL_ANCHORS, type LogoAnchor } from "@/lib/logoPlacement";
 import type { AreaDef } from "@/lib/areas";
 import { getInputFields, getInputLayout, type InputFieldDef } from "@/lib/inputFields";
-import { hasSides, type Side } from "@/lib/formats";
+import { hasSides, formatSupportsAreas, type Side } from "@/lib/formats";
 import { getTextStyle, DEFAULT_TEXT_STYLE } from "@/lib/textStyles";
 import { getTextColor, type TextColorName } from "@/lib/textColors";
 import { getShapeMotion, type Motion } from "@/algorithms/shapeAnimation";
@@ -397,13 +397,22 @@ export function drawGrid(p5: p5Types, params: Params) {
   const isTwoSided = hasSides(format);
   const activeSide: Side | undefined = isTwoSided ? side ?? "front" : undefined;
 
+  // Formate ohne Areas-Unterstützung (Business Card, Ticket, Voucher – siehe
+  // supportsAreas in lib/formats.ts) zeigen in der Sidebar keine Areas-Sektion
+  // mehr an, sobald man zu ihnen wechselt. Vorher angelegte Areas blieben im
+  // Store aber erhalten und wurden hier trotzdem weiter gerendert – obwohl
+  // sie nicht mehr verwaltet/entfernt werden konnten. Für so ein Format
+  // bleiben Areas deshalb komplett unberücksichtigt, statt als unsichtbar
+  // "verwaltbare" Geister-Areas weiter auf der Canvas zu erscheinen.
+  const areasForFormat = formatSupportsAreas(format) ? areas : [];
+
   // Bei zweiseitigen Formaten gehört jede Area zu genau einer Seite (siehe
   // AreaDef.side in lib/areas.ts) – nur die zur gerade gezeichneten Seite
   // passenden Areas werden berücksichtigt, damit ein auf der Rückseite
   // platziertes Bild/Text nicht auch auf der Vorderseite auftaucht.
   const sideAreas = isTwoSided
-    ? areas.filter((a) => (a.side ?? "front") === activeSide)
-    : areas;
+    ? areasForFormat.filter((a) => (a.side ?? "front") === activeSide)
+    : areasForFormat;
 
   // Sind ALLE Shapes ausgewählt, wird statt der einzelnen Buchstaben das volle
   // Logo verwendet (als synthetische Shape, gerendert wie alle anderen – also

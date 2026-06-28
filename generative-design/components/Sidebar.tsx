@@ -20,7 +20,7 @@ import { DEFAULT_COLORS, normalizeHex } from "@/lib/colors"
 import { exportRegistry } from "@/lib/canvasExport"
 import { getInputFields } from "@/lib/inputFields"
 import { ALL_ANCHORS, ANCHOR_LABELS, type LogoAnchor } from "@/lib/logoPlacement"
-import { hasSides, type Side } from "@/lib/formats"
+import { hasSides, formatSupportsAreas, type Side } from "@/lib/formats"
 import type { LogoMode } from "@/algorithms/grid"
 import { TEXT_STYLES, type TextStyleName } from "@/lib/textStyles"
 import {
@@ -37,7 +37,6 @@ const SIDES: Side[] = ["front", "back"];
 const AREA_KINDS: AreaKind[] = ["text", "image", "video"];
 const AREA_KIND_LABELS: Record<AreaKind, string> = { text: "Text", image: "Bild", video: "Video" };
 const NO_IMAGE_AREA_FORMATS = ["Business Card", "Ticket", "Voucher"];
-const NO_AREAS_FORMATS = ["Business Card", "Ticket", "Voucher"];
 // Bei diesen Formaten werden alle Input-Felder (Vorder- und Rückseite)
 // gemeinsam angezeigt, unabhängig vom Vorne/Hinten-Toggle.
 const SHOW_ALL_SIDES_INPUT_FORMATS = ["Business Card", "Ticket", "Voucher"];
@@ -478,7 +477,7 @@ export default function Sidebar() {
           </RulerItem>
         </RulerSection>
 
-        {!NO_AREAS_FORMATS.includes(format) && (
+        {formatSupportsAreas(format) && (
           <>
             <SeparationLine/>
 

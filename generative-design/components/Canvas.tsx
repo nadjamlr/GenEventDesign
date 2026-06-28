@@ -627,6 +627,10 @@ export default function Canvas() {
         );
         onLoaded(pImg);
       };
+      htmlImg.onerror = () => {
+        // eslint-disable-next-line no-console
+        console.warn(`[logo] Laden fehlgeschlagen: ${src.slice(0, 80)}`);
+      };
       htmlImg.src = src;
     }
 
@@ -1010,9 +1014,14 @@ export default function Canvas() {
             loadLogoVariant(p, blobUrl, (img) => {
               logoImages.icon!.black = img;
               URL.revokeObjectURL(blobUrl);
+              // eslint-disable-next-line no-console
+              console.log("[logo] schwarzes Icon erfolgreich aus Weiß-Vorlage abgeleitet");
             });
           })
-          .catch(() => {});
+          .catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn("[logo] Ableiten des schwarzen Icons fehlgeschlagen:", err);
+          });
 
         canvasElt.addEventListener("mousedown", handleMouseDown);
         window.addEventListener("mousemove", handleMouseMove);
