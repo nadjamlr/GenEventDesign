@@ -364,7 +364,10 @@ export default function Canvas() {
     }
 
     function findAreaAt(localX: number, localY: number, regionW: number, regionH: number, side: Side | undefined) {
-      const resolved = resolveOverlayAreas(areasForSide(side), regionW, regionH);
+      // Dieselbe Auto-Größe wie beim Zeichnen (siehe resolveOverlayAreas in
+      // grid.ts): Hit-Testing braucht denselben p5/Font-Zugriff zur Messung,
+      // damit die Drag-Box exakt der gerenderten Box entspricht.
+      const resolved = resolveOverlayAreas(instance, areasForSide(side), regionW, regionH, getFontProvider(instance));
       for (let i = resolved.length - 1; i >= 0; i--) {
         const r = resolved[i];
         if (localX >= r.x && localX <= r.x + r.w && localY >= r.y && localY <= r.y + r.h) {

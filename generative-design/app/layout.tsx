@@ -10,8 +10,8 @@ const poppins = Poppins({
 
 
 export const metadata: Metadata = {
-  title: "Design Generator",
-  description: "Design Generator",
+  title: "NRLY Design Generator",
+  description: "NRLY Skate - Generative Design Generator",
 };
 
 export default function RootLayout({
