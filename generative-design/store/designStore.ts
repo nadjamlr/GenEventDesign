@@ -74,7 +74,7 @@ const useDesignStore = create<DesignStore>((set) => ({
   loopDuration: 5.5,
   gridResolution: 5,
   dotSize: 4,
-  dotVariation: 0,
+  dotVariation: 4,
   setColumns: (v) => set({ columns: v }),
   setRows: (v) => set({ rows: v }),
   setFormat: (v) =>
