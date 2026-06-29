@@ -46,9 +46,9 @@ export function pickFlyInDirection(seed: number): FlyInDirection {
 // ENTER_SPREAD_SECONDS) jedes Element ein und bleibt abrupt stehen, hält
 // (adaptiv, siehe MIN_HOLD_SECONDS unten), und fliegt ebenso gestaffelt
 // wieder hinaus – am Loop-Rand (t=0/1) ist die Canvas dadurch garantiert leer.
-const ENTER_SPREAD_SECONDS = 0.7; // Streuung der Start-Zeitpunkte – kurz, damit die Canvas schnell gefüllt ist statt lange leer/spärlich zu wirken
-const ENTER_FLIGHT_SECONDS = 0.3; // Flugzeit eines einzelnen Elements bei Standardgeschwindigkeit (speedFactor 0.5)
-const EXIT_SPREAD_SECONDS = 0.7; // genauso kurz gestreut wie der Einflug
+const ENTER_SPREAD_SECONDS = 0.35; // Streuung der Start-Zeitpunkte – kurz gehalten, damit die Canvas direkt zu Loop-Beginn füllt, statt erst spürbar verzögert/spärlich zu wirken
+const ENTER_FLIGHT_SECONDS = 0.25; // Flugzeit eines einzelnen Elements bei Standardgeschwindigkeit (speedFactor 0.5)
+const EXIT_SPREAD_SECONDS = 0.7; // Ausflug darf ruhig gestreuter sein – nur der Start soll schnell wirken
 const EXIT_FLIGHT_SECONDS = 0.4;
 
 // HOLD ist bewusst KEINE feste Konstante, sondern "was von der Loop nach

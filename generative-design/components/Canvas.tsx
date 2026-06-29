@@ -801,6 +801,15 @@ export default function Canvas() {
     // würfeln), liest exportRegistry.renderFrame diesen Wert mit aus.
     let currentPhase: number | undefined;
 
+    // Nullpunkt der Animations-Uhr (in p.millis()). Wird beim Einschalten der
+    // Animation auf "jetzt" gesetzt, damit die Loop garantiert bei Phase 0
+    // beginnt – sonst startet sie (da aus p.millis() seit Sketch-Start
+    // abgeleitet) an einer beliebigen Stelle der Loop, was bei Modi wie dem
+    // Einfliegen wie eine Verzögerung wirkt (man landet z.B. mitten in der
+    // Haltephase, bevor sichtbar etwas passiert).
+    let animEpochMs: number | undefined;
+    let animateWasOn = false;
+
     // Mockup-Formate (z.B. T-Shirt): Produktfoto füllt die Canvas, die
     // generative Komposition wird in die Design-Zone (Brust) gerechnet.
     const mockupImages = new Map<string, p5.Image>();
@@ -1045,8 +1054,14 @@ export default function Canvas() {
         // Animations-Phase aus der Echtzeit ableiten; bei ausgeschalteter
         // Animation bleibt time undefined und drawGrid zeichnet statisch.
         const { animate, loopDuration } = paramsRef.current;
+        // Beim Einschalten die Uhr auf "jetzt" setzen, damit die Loop bei
+        // Phase 0 startet (Animation beginnt sofort, statt mitten in der Loop).
+        if (animate && !animateWasOn) animEpochMs = p.millis();
+        animateWasOn = animate;
         const time =
-          animate && loopDuration > 0 ? (p.millis() / 1000 / loopDuration) % 1 : undefined;
+          animate && loopDuration > 0
+            ? ((p.millis() - (animEpochMs ?? 0)) / 1000 / loopDuration) % 1
+            : undefined;
         currentPhase = time;
 
         if (stacked) {
