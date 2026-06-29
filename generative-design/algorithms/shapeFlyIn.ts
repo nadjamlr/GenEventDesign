@@ -63,6 +63,18 @@ const EXIT_FLIGHT_SECONDS = 0.4;
 // eingestellten Wert.
 const MIN_HOLD_SECONDS = 0.3;
 
+// Die Haltephase soll IMMER deutlich länger sein als die Zeit, die ein
+// Element komplett außerhalb der Canvas verbringt (siehe presence()) – sonst
+// wirkt es so, als würde ein Element kaum eingeflogen sein, bevor es schon
+// wieder hinausfliegt. Bei einer kurzen eingestellten Loop-Dauer würde das
+// feste Enter+Exit-Sekundenbudget (transitBudgetNominal) sonst einen großen
+// Teil der Loop einnehmen und HOLD bis auf MIN_HOLD_SECONDS zusammendrücken.
+// Deshalb wird das Budget anteilig (transitScale) verkleinert, sobald es mehr
+// als (1 - MIN_HOLD_FRACTION) der Loop belegen würde – die Flüge werden dann
+// zwar kürzer/schneller, aber HOLD bleibt garantiert der dominante Teil der
+// Loop.
+const MIN_HOLD_FRACTION = 0.6;
+
 // Erlaubte Spanne für den Geschwindigkeits-Faktor pro Element: >1 = schneller
 // (kürzere Flugzeit), <1 = langsamer. Bei MAX_SPEED bleibt noch genug Puffer
 // zur Haltephase, damit auch die schnellsten/langsamsten Elemente innerhalb
@@ -70,19 +82,22 @@ const MIN_HOLD_SECONDS = 0.3;
 const MIN_SPEED = 0.6;
 const MAX_SPEED = 2.2;
 
-// Bremsweg nur ganz am Ende der Flugzeit: den größten Teil der Zeit
-// (CRUISE_FRACTION) legt das Element mit konstantem Tempo den Großteil der
-// Strecke (CRUISE_PROGRESS) zurück; erst im letzten Stück der Zeit (1 -
-// CRUISE_FRACTION) wird abgebremst, je näher die Zielposition kommt, desto
-// langsamer (quadratisches Ease-out). Der Anfang bleibt linear/kantig, nur
-// das Ende der Bewegung wird sanft.
-const CRUISE_FRACTION = 0.7;
-const CRUISE_PROGRESS = 0.82;
+// Abbremsen über die GESAMTE Flugzeit (kubisches Ease-out), nicht nur im
+// letzten Stück: vorher legte das Element den Großteil der Strecke mit
+// konstantem, recht hohem Tempo zurück und bremste erst in den letzten 30%
+// der Zeit ab – bei der großen Flugdistanz (siehe flyInAmplitude) sah das
+// beim Einfliegen wie ein Überschießen über die Zielposition hinaus aus,
+// weil der sichtbare Teil der Bewegung (innerhalb der Canvas) meist noch in
+// der schnellen Phase lag und die eigentliche Bremsung erst ganz am Schluss
+// (oft schon sehr nah am/hinter dem Canvas-Rand) einsetzte. Eine durchgehende
+// Bremsung sorgt dafür, dass die Annäherung an die Zielposition schon von
+// weiter weg sichtbar langsamer wird. Beim Ausfliegen (zeitlich gespiegelt)
+// bedeutet das einen sanften Start statt eines abrupten Tempowechsels –
+// fällt aber kaum auf, weil dieser Teil ohnehin meist außerhalb der Canvas
+// liegt.
 function easeOutTail(u: number): number {
-  if (u <= CRUISE_FRACTION) return (u / CRUISE_FRACTION) * CRUISE_PROGRESS;
-  const s = (u - CRUISE_FRACTION) / (1 - CRUISE_FRACTION); // 0..1 in der Bremsphase
-  const eased = 1 - (1 - s) * (1 - s);
-  return CRUISE_PROGRESS + (1 - CRUISE_PROGRESS) * eased;
+  const c = Math.max(0, Math.min(1, u));
+  return 1 - (1 - c) * (1 - c) * (1 - c);
 }
 
 // Anwesenheit eines Elements zum Zeitpunkt t (0..1 in der Loop): 0 = noch/
@@ -91,10 +106,11 @@ function easeOutTail(u: number): number {
 // damit die Elemente nacheinander statt im Gleichschritt erscheinen/
 // verschwinden ("vereinzelt"). `speed` (>0, 1 = Standardgeschwindigkeit)
 // verkürzt/verlängert die individuelle Flugzeit, damit nicht alle Elemente
-// gleich schnell fliegen. `loopDurationSeconds` rechnet die festen Sekunden-
-// Werte oben in Phasen-Brüche um – das Ein-/Ausflugfenster wird dadurch bei
-// einer längeren Loop nicht automatisch langsamer durchlaufen, nur die
-// Haltephase dazwischen wird entsprechend länger. Beim Einfliegen bremst
+// gleich schnell fliegen. `loopDurationSeconds` rechnet die (ggf. per
+// MIN_HOLD_FRACTION skalierten) Sekunden-Werte oben in Phasen-Brüche um –
+// das Ein-/Ausflugfenster wird dadurch bei einer längeren Loop nicht
+// automatisch langsamer durchlaufen, nur die Haltephase dazwischen wird
+// entsprechend länger. Beim Einfliegen bremst
 // easeOutTail() das letzte Stück vor der Zielposition ab; beim Ausfliegen
 // (zeitlich gespiegelt) ist es entsprechend gleich nach dem Start (= nahe
 // der Position) langsam und wird danach schneller. Das Exit-Fenster startet
@@ -110,19 +126,27 @@ function presence(t: number, off: number, speed: number, loopDurationSeconds: nu
   // ein langsames UND spät gestaffeltes Element (hohes off) über das Loop-
   // Ende hinaus fliegen wollen und an der Naht abrupt verschwinden ("poppen"),
   // statt seinen Ausflug sichtbar zu Ende zu bringen.
-  const transitBudget =
+  const transitBudgetNominal =
     ENTER_SPREAD_SECONDS + ENTER_FLIGHT_SECONDS / MIN_SPEED + EXIT_SPREAD_SECONDS + EXIT_FLIGHT_SECONDS / MIN_SPEED;
+  const maxTransitBudget = loop * (1 - MIN_HOLD_FRACTION);
+  const transitScale = transitBudgetNominal > maxTransitBudget ? maxTransitBudget / transitBudgetNominal : 1;
+  const enterSpreadSeconds = ENTER_SPREAD_SECONDS * transitScale;
+  const enterFlightSeconds = ENTER_FLIGHT_SECONDS * transitScale;
+  const exitSpreadSeconds = EXIT_SPREAD_SECONDS * transitScale;
+  const exitFlightSeconds = EXIT_FLIGHT_SECONDS * transitScale;
+  const transitBudget =
+    enterSpreadSeconds + enterFlightSeconds / MIN_SPEED + exitSpreadSeconds + exitFlightSeconds / MIN_SPEED;
   const holdSeconds = Math.max(MIN_HOLD_SECONDS, loop - transitBudget);
-  const enterSpread = ENTER_SPREAD_SECONDS / loop;
-  const enterDuration = ENTER_FLIGHT_SECONDS / speed / loop;
+  const enterSpread = enterSpreadSeconds / loop;
+  const enterDuration = enterFlightSeconds / speed / loop;
   const enterStart = off * enterSpread;
   const enterEnd = enterStart + enterDuration;
   if (t < enterStart) return 0;
   if (t < enterEnd) return easeOutTail((t - enterStart) / enterDuration);
 
-  const exitSpread = EXIT_SPREAD_SECONDS / loop;
-  const exitWindowStart = (ENTER_SPREAD_SECONDS + ENTER_FLIGHT_SECONDS + holdSeconds) / loop;
-  const exitDuration = EXIT_FLIGHT_SECONDS / speed / loop;
+  const exitSpread = exitSpreadSeconds / loop;
+  const exitWindowStart = (enterSpreadSeconds + enterFlightSeconds + holdSeconds) / loop;
+  const exitDuration = exitFlightSeconds / speed / loop;
   const exitStart = exitWindowStart + off * exitSpread;
   const exitEnd = exitStart + exitDuration;
   if (t < exitStart) return 1;

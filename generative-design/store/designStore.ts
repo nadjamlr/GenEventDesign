@@ -63,7 +63,7 @@ const useDesignStore = create<DesignStore>((set) => ({
   exportType: FORMAT_SIZES[DEFAULT_FORMAT].defaultExportType ?? "png",
   selectedShapes: shapes[0] ? [shapes[0].id] : [],
   customColors: [],
-  selectedColors: ["#000000"],
+  selectedColors: ["#000000", "#1C1F22"],
   seed: Math.floor(Math.random() * 1e9),
   inputValues: {},
   areas: [],
