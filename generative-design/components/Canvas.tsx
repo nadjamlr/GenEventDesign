@@ -248,6 +248,29 @@ function pickVideoMime(): string {
   return "video/webm";
 }
 
+// WebCodecs-Frame mit explizitem Zeitstempel (für ruckelfreie Aufnahmen, siehe
+// renderVideo/startRecording): jeder Frame bekommt einen exakten Zeitstempel,
+// statt den Canvas in Echtzeit abzutasten – die Bildrate bleibt dadurch
+// konstant, unabhängig davon, wie lange das Rendern eines Frames dauert.
+type VideoFrameLike = { close(): void };
+type VideoFrameInit = { timestamp: number; duration?: number };
+type WebCodecsVideoApi = {
+  TrackGen: new (init: { kind: "video" }) => MediaStreamTrack & {
+    writable: WritableStream<VideoFrameLike>;
+  };
+  VideoFrameCtor: new (source: CanvasImageSource, init: VideoFrameInit) => VideoFrameLike;
+};
+function getWebCodecsVideoApi(): WebCodecsVideoApi | null {
+  const w = window as unknown as {
+    MediaStreamTrackGenerator?: WebCodecsVideoApi["TrackGen"];
+    VideoFrame?: WebCodecsVideoApi["VideoFrameCtor"];
+  };
+  if (w.MediaStreamTrackGenerator && w.VideoFrame) {
+    return { TrackGen: w.MediaStreamTrackGenerator, VideoFrameCtor: w.VideoFrame };
+  }
+  return null;
+}
+
 export default function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const {
@@ -1182,7 +1205,7 @@ export default function Canvas() {
     // WebM auf. Es wird in Echtzeit in ein Offscreen-Graphics gezeichnet und
     // dessen Canvas-Stream via MediaRecorder mitgeschnitten (eine 4s-Schleife
     // dauert also ~4s).
-    exportRegistry.renderVideo = ({ duration, fps = 30, side: overrideSide, onProgress }) => {
+    exportRegistry.renderVideo = async ({ duration, fps = 30, side: overrideSide, onProgress }) => {
       const params = paramsRef.current;
       const { width, height } = params;
       const gfx = instance.createGraphics(width, height);
@@ -1228,29 +1251,74 @@ export default function Canvas() {
       };
 
       const totalFrames = Math.max(1, Math.round(duration * fps));
-      const frameMs = 1000 / fps;
+      const mimeType = pickVideoMime();
 
-      // Sichtbare Schleife anhalten und den ersten Frame vorzeichnen.
+      // Sichtbare Schleife anhalten, damit die ganze Rechenzeit in den Export fließt.
       exportingVideo = true;
-      drawFrame(0);
 
-      // Manuelles Frame-Capturing (captureStream(0) + requestFrame): jeder
-      // gezeichnete Frame wird gezielt – gleichmäßig getaktet – in den Stream
-      // geschoben, statt den Canvas in Echtzeit abzutasten. Das ergibt eine
-      // konstante Bildrate ohne Ruckeln/Doppelframes.
+      // --- Frame-genauer Pfad (WebCodecs) ---------------------------------
+      // Jeder Frame bekommt einen EXAKTEN Zeitstempel und wird so schnell wie
+      // möglich (NICHT in Echtzeit) in den Stream geschrieben. Dadurch ist die
+      // Bildrate im Video konstant, egal wie lange das Rendern eines Frames
+      // dauert. Genau hier entstand vorher das Ruckeln: bei der Echtzeit-
+      // Abtastung (captureStream + requestFrame im setTimeout) hingen die
+      // Frame-Abstände an der schwankenden Render-/Timer-Dauer.
+      const webcodecs = getWebCodecsVideoApi();
+
+      if (webcodecs) {
+        const { TrackGen, VideoFrameCtor } = webcodecs;
+        const trackGen = new TrackGen({ kind: "video" });
+        const writer = trackGen.writable.getWriter();
+        const stream = new MediaStream([trackGen]);
+        const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 16_000_000 });
+        const chunks: BlobPart[] = [];
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) chunks.push(e.data);
+        };
+        const stopped = new Promise<void>((res) => {
+          recorder.onstop = () => res();
+          recorder.onerror = () => res();
+        });
+        try {
+          recorder.start();
+          const frameDurUs = 1_000_000 / fps;
+          for (let f = 0; f < totalFrames; f++) {
+            drawFrame(f / totalFrames);
+            const frame = new VideoFrameCtor(gfx.elt as HTMLCanvasElement, {
+              timestamp: Math.round(f * frameDurUs),
+              duration: Math.round(frameDurUs),
+            });
+            // write() bremst über Backpressure, falls der Encoder nachhängt –
+            // die Zeitstempel bleiben trotzdem exakt, also bleibt das Video glatt.
+            await writer.write(frame);
+            onProgress?.((f + 1) / totalFrames);
+          }
+          await writer.close();
+          recorder.stop();
+          await stopped;
+          return new Blob(chunks, { type: mimeType });
+        } finally {
+          exportingVideo = false;
+          gfx.remove();
+        }
+      }
+
+      // --- Fallback (kein WebCodecs, z.B. Firefox/Safari) -----------------
+      // Echtzeit-Aufnahme, aber driftkompensiert: der nächste Frame wird auf
+      // einen festen Wanduhr-Zeitpunkt (start + f*frameMs) gelegt, abzüglich der
+      // bereits verstrichenen Render-Zeit – statt stur frameMs NACH dem letzten
+      // Frame zu warten. Das hält die Frame-Abstände gleichmäßig.
+      const frameMs = 1000 / fps;
+      drawFrame(0);
       const stream = (gfx.elt as HTMLCanvasElement).captureStream(0);
       const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
-      const mimeType = pickVideoMime();
       const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 16_000_000 });
       const chunks: BlobPart[] = [];
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunks.push(e.data);
       };
 
-      return new Promise<Blob>((resolve) => {
-        // Genau einmal abschließen – egal ob normaler Stop oder Recorder-Fehler
-        // –, damit Graphics + sichtbare Schleife aufgeräumt werden und die UI
-        // nie hängen bleibt.
+      return await new Promise<Blob>((resolve) => {
         let settled = false;
         const finish = () => {
           if (settled) return;
@@ -1263,13 +1331,15 @@ export default function Canvas() {
         recorder.onerror = finish;
 
         recorder.start();
+        const startMs = performance.now();
         let f = 0;
-        const drawNext = () => {
+        const tick = () => {
           if (settled) return;
           drawFrame(f / totalFrames);
           track.requestFrame?.();
           f++;
           onProgress?.(f / totalFrames);
+          const target = startMs + f * frameMs;
           if (f >= totalFrames) {
             setTimeout(() => {
               try {
@@ -1278,12 +1348,12 @@ export default function Canvas() {
               } catch {
                 finish();
               }
-            }, frameMs);
+            }, Math.max(0, target - performance.now()));
             return;
           }
-          setTimeout(drawNext, frameMs);
+          setTimeout(tick, Math.max(0, target - performance.now()));
         };
-        setTimeout(drawNext, frameMs);
+        setTimeout(tick, 0);
       });
     };
 
@@ -1298,6 +1368,8 @@ export default function Canvas() {
       chunks: BlobPart[];
       mimeType: string;
       timeoutId: number;
+      writer?: WritableStreamDefaultWriter<VideoFrameLike>;
+      cancelled: boolean;
     } | null = null;
 
     exportRegistry.startRecording = (options) => {
@@ -1350,29 +1422,88 @@ export default function Canvas() {
       // angehalten (kein exportingVideo = true): Aufnahme läuft parallel zur
       // normalen, in Echtzeit weiterlaufenden Vorschau, damit man sieht, was
       // gerade aufgenommen wird, und weiß, wann man stoppen will.
+      const mimeType = pickVideoMime();
+      const frameMs = 1000 / fps;
       const startMs = performance.now();
       drawFrame(animate && loopDuration > 0 ? 0 : undefined);
+      // Phase aus der ECHTZEIT ableiten (offenes Ende), nicht aus einem Frame-
+      // Index – so läuft die Aufnahme synchron zur Vorschau.
+      const phaseAt = (elapsedSec: number) =>
+        animate && loopDuration > 0 ? (elapsedSec / loopDuration) % 1 : undefined;
+      const webcodecs = getWebCodecsVideoApi();
 
+      // WebCodecs-Pfad: jeder Frame wird mit seinem EXAKTEN Echtzeit-Zeitstempel
+      // geschrieben. Selbst wenn das Rendern mal länger dauert, sitzt der Frame
+      // im Video an der richtigen Stelle – das Ergebnis ruckelt nicht.
+      if (webcodecs) {
+        const { TrackGen, VideoFrameCtor } = webcodecs;
+        const trackGen = new TrackGen({ kind: "video" });
+        const writer = trackGen.writable.getWriter();
+        const stream = new MediaStream([trackGen]);
+        const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 16_000_000 });
+        const chunks: BlobPart[] = [];
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) chunks.push(e.data);
+        };
+        let n = 0;
+        const tick = async () => {
+          if (!activeRecording || activeRecording.cancelled) return;
+          const elapsedSec = (performance.now() - startMs) / 1000;
+          drawFrame(phaseAt(elapsedSec));
+          try {
+            const frame = new VideoFrameCtor(gfx.elt as HTMLCanvasElement, {
+              timestamp: Math.round(elapsedSec * 1_000_000),
+            });
+            await writer.write(frame);
+          } catch {
+            /* wird gleich gestoppt */
+          }
+          if (!activeRecording || activeRecording.cancelled) return;
+          n++;
+          const target = startMs + n * frameMs;
+          activeRecording.timeoutId = window.setTimeout(tick, Math.max(0, target - performance.now()));
+        };
+        activeRecording = {
+          gfx,
+          recorder,
+          chunks,
+          mimeType,
+          writer,
+          cancelled: false,
+          timeoutId: window.setTimeout(tick, frameMs),
+        };
+        recorder.start();
+        return;
+      }
+
+      // Fallback (kein WebCodecs): Echtzeit-Aufnahme, aber driftkompensiert
+      // getaktet (nächster Frame auf start + n*frameMs), damit die Frame-Abstände
+      // gleichmäßig bleiben statt an der Render-/Timer-Dauer zu hängen.
       const stream = (gfx.elt as HTMLCanvasElement).captureStream(0);
       const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
-      const mimeType = pickVideoMime();
       const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 16_000_000 });
       const chunks: BlobPart[] = [];
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunks.push(e.data);
       };
-
-      const frameMs = 1000 / fps;
+      let n = 0;
       const tick = () => {
-        if (!activeRecording) return;
+        if (!activeRecording || activeRecording.cancelled) return;
         const elapsedSec = (performance.now() - startMs) / 1000;
-        const phase = animate && loopDuration > 0 ? (elapsedSec / loopDuration) % 1 : undefined;
-        drawFrame(phase);
+        drawFrame(phaseAt(elapsedSec));
         track.requestFrame?.();
-        activeRecording.timeoutId = window.setTimeout(tick, frameMs);
+        n++;
+        const target = startMs + n * frameMs;
+        activeRecording.timeoutId = window.setTimeout(tick, Math.max(0, target - performance.now()));
       };
-
-      activeRecording = { gfx, recorder, chunks, mimeType, timeoutId: window.setTimeout(tick, frameMs) };
+      activeRecording = {
+        gfx,
+        recorder,
+        chunks,
+        mimeType,
+        cancelled: false,
+        timeoutId: window.setTimeout(tick, frameMs),
+      };
       recorder.start();
     };
 
@@ -1382,23 +1513,33 @@ export default function Canvas() {
           resolve(new Blob());
           return;
         }
-        const { gfx, recorder, chunks, mimeType, timeoutId } = activeRecording;
-        window.clearTimeout(timeoutId);
+        const rec = activeRecording;
+        rec.cancelled = true;
+        window.clearTimeout(rec.timeoutId);
         let settled = false;
         const finish = () => {
           if (settled) return;
           settled = true;
-          gfx.remove();
+          rec.gfx.remove();
           activeRecording = null;
-          resolve(new Blob(chunks, { type: mimeType }));
+          resolve(new Blob(rec.chunks, { type: rec.mimeType }));
         };
-        recorder.onstop = finish;
-        recorder.onerror = finish;
-        try {
-          recorder.requestData?.();
-          recorder.stop();
-        } catch {
-          finish();
+        rec.recorder.onstop = finish;
+        rec.recorder.onerror = finish;
+        const stopRecorder = () => {
+          try {
+            rec.recorder.requestData?.();
+            rec.recorder.stop();
+          } catch {
+            finish();
+          }
+        };
+        // WebCodecs-Aufnahme: erst den Writer schließen (restliche Frames
+        // flushen), dann den Recorder stoppen. Sonst direkt stoppen.
+        if (rec.writer) {
+          rec.writer.close().then(stopRecorder, stopRecorder);
+        } else {
+          stopRecorder();
         }
       });
     };
