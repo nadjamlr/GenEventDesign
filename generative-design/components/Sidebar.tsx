@@ -126,6 +126,7 @@ export default function Sidebar() {
   const [areaTextStyle, setAreaTextStyle] = useState<TextStyleName>("title");
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bgFileInputRef = useRef<HTMLInputElement>(null);
 
   const allowImageAreas = !NO_IMAGE_AREA_FORMATS.includes(format);
   const availableAreaKinds = allowImageAreas
@@ -277,6 +278,58 @@ export default function Sidebar() {
     if (!normalized) return;
     addCustomColor(normalized);
     setHexInput("");
+  }
+
+  // Hintergrund-Steuerung für Formate ohne Areas-Panel (Business Card, Ticket,
+  // Voucher): ein einzelnes, globales Hintergrund-Bild, optional als Cutout
+  // ("Shapes" -> durch die platzierten Shapes ausgestanzt). Direkt im Store
+  // gepflegt, ohne den (für diese Formate ausgeblendeten) Areas-Workflow.
+  const backgroundAreaForFormat = areas.find((a) => a.anchor === "background");
+
+  function applyBackgroundImage(dataUrl: string) {
+    if (backgroundAreaForFormat) {
+      updateArea(backgroundAreaForFormat.id, {
+        kind: "image",
+        imageDataUrl: dataUrl,
+        videoUrl: undefined,
+      });
+    } else {
+      addArea({
+        kind: "image",
+        anchor: "background",
+        imageDataUrl: dataUrl,
+        shapeId: undefined,
+        grayscale: false,
+        side: undefined,
+        ...DEFAULT_IMAGE_AREA_SIZE,
+      });
+    }
+  }
+
+  function handleBackgroundImageChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => applyBackgroundImage(reader.result as string);
+    reader.readAsDataURL(file);
+  }
+
+  function setBackgroundUsesShapes(useShapes: boolean) {
+    if (backgroundAreaForFormat) {
+      updateArea(backgroundAreaForFormat.id, {
+        shapeId: useShapes ? CUTOUT_SHAPES_ID : undefined,
+      });
+    }
+  }
+
+  function toggleBackgroundGrayscale() {
+    if (backgroundAreaForFormat) {
+      updateArea(backgroundAreaForFormat.id, { grayscale: !backgroundAreaForFormat.grayscale });
+    }
+  }
+
+  function removeBackground() {
+    if (backgroundAreaForFormat) removeArea(backgroundAreaForFormat.id);
   }
 
   async function handleSnapshot() {
@@ -493,6 +546,63 @@ export default function Sidebar() {
             </RulerItem>
           </div>
         </RulerSection>
+
+        {!formatSupportsAreas(format) && (
+          <>
+            <SeparationLine/>
+
+            <RulerSection heading="Background">
+              <RulerItem label="Image">
+                <input
+                  ref={bgFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleBackgroundImageChange}
+                />
+                <Button
+                  text={
+                    backgroundAreaForFormat?.imageDataUrl &&
+                    !GALLERY_IMAGES.some((img) => img.src === backgroundAreaForFormat?.imageDataUrl)
+                      ? "Bild gewählt"
+                      : "Upload"
+                  }
+                  color="grey"
+                  onClick={() => bgFileInputRef.current?.click()}
+                />
+                <Button
+                  text="B&W"
+                  color={backgroundAreaForFormat?.grayscale ? "colored" : "grey"}
+                  onClick={toggleBackgroundGrayscale}
+                />
+              </RulerItem>
+              <div className="grid grid-cols-4 gap-2 px-2">
+                {GALLERY_IMAGES.map((img) => (
+                  <GalleryImageButton
+                    key={img.id}
+                    label={img.label}
+                    src={img.src}
+                    selected={backgroundAreaForFormat?.imageDataUrl === img.src}
+                    onClick={() => applyBackgroundImage(img.src)}
+                  />
+                ))}
+              </div>
+              <RulerItem label="Shape">
+                <Dropdown
+                  label="Choose"
+                  value={backgroundAreaForFormat?.shapeId ? SHAPES_LABEL : NO_SHAPE_LABEL}
+                  fields={BACKGROUND_SHAPE_OPTIONS}
+                  onChange={(label) => setBackgroundUsesShapes(label === SHAPES_LABEL)}
+                />
+              </RulerItem>
+              {backgroundAreaForFormat && (
+                <div className="flex flex-col w-full items-center px-2 mt-2">
+                  <Button size="sm" text="Remove" color="grey" onClick={removeBackground} />
+                </div>
+              )}
+            </RulerSection>
+          </>
+        )}
 
         {formatSupportsAreas(format) && (
           <>

@@ -418,19 +418,33 @@ export function drawGrid(p5: p5Types, params: Params) {
 
   // Formate ohne Areas-Unterstützung (Business Card, Ticket, Voucher – siehe
   // supportsAreas in lib/formats.ts) zeigen in der Sidebar keine Areas-Sektion
-  // mehr an, sobald man zu ihnen wechselt. Vorher angelegte Areas blieben im
-  // Store aber erhalten und wurden hier trotzdem weiter gerendert – obwohl
-  // sie nicht mehr verwaltet/entfernt werden konnten. Für so ein Format
-  // bleiben Areas deshalb komplett unberücksichtigt, statt als unsichtbar
-  // "verwaltbare" Geister-Areas weiter auf der Canvas zu erscheinen.
-  const areasForFormat = formatSupportsAreas(format) ? areas : [];
+  // mehr an, sobald man zu ihnen wechselt. Vorher angelegte FREIE Areas blieben
+  // im Store aber erhalten und wurden hier trotzdem weiter gerendert – obwohl
+  // sie nicht mehr verwaltet/entfernt werden konnten. Solche frei platzierten
+  // Areas bleiben deshalb unberücksichtigt, statt als unsichtbar "verwaltbare"
+  // Geister-Areas weiter auf der Canvas zu erscheinen.
+  // Das Hintergrund-Bild/-Video (anchor === "background") ist davon ausgenommen:
+  // es ist ein einzelnes, vollflächiges Element (kein frei platzierter Clutter)
+  // und soll auch auf diesen Formaten greifen – inkl. des Cutout-Modus, bei dem
+  // die platzierten Shapes das Hintergrundbild ausstanzen.
+  const areasForFormat = formatSupportsAreas(format)
+    ? areas
+    : areas.filter((a) => a.anchor === "background");
 
   // Bei zweiseitigen Formaten gehört jede Area zu genau einer Seite (siehe
   // AreaDef.side in lib/areas.ts) – nur die zur gerade gezeichneten Seite
   // passenden Areas werden berücksichtigt, damit ein auf der Rückseite
   // platziertes Bild/Text nicht auch auf der Vorderseite auftaucht.
+  // Ausnahme: ein Hintergrund OHNE eigene Seite (a.side === undefined, z.B. auf
+  // einem einseitigen Format gesetzt und dann hierher gewechselt) gilt als
+  // global und wird auf BEIDEN Seiten gezeigt; ein bewusst pro Seite gesetzter
+  // Hintergrund (a.side definiert) bleibt seiner Seite zugeordnet.
   const sideAreas = isTwoSided
-    ? areasForFormat.filter((a) => (a.side ?? "front") === activeSide)
+    ? areasForFormat.filter(
+        (a) =>
+          (a.anchor === "background" && a.side === undefined) ||
+          (a.side ?? "front") === activeSide
+      )
     : areasForFormat;
 
   // Sind ALLE Shapes ausgewählt, wird statt der einzelnen Buchstaben das volle
