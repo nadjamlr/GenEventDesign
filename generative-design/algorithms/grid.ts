@@ -34,6 +34,13 @@ export type ShapeImageProvider = {
     excludeRects: { x: number; y: number; w: number; h: number }[],
     time?: number
   ) => p5Types.Image | undefined;
+  /**
+   * Rohe Shape-Silhouette (deckend, schwarz auf transparent) als zeichenbare
+   * Quelle. Wird im Cutout-Modus gebraucht (siehe Hintergrund-Bild-Area unten):
+   * die platzierten Shapes werden als Löcher aus der Hintergrundfarbe
+   * ausgestanzt, durch die das Hintergrundbild scheint.
+   */
+  getSilhouette?: (id: string) => CanvasImageSource | undefined;
 };
 
 export type LogoVariantImages = {
@@ -473,7 +480,21 @@ export function drawGrid(p5: p5Types, params: Params) {
     .filter((a) => (a.kind === "image" || a.kind === "video") && a.anchor === "background")
     .pop();
 
-  if (backgroundArea && areaImages) {
+  // Cutout-Modus: nur wenn das Hintergrund-Bild/Video ausdrücklich auf "Shapes"
+  // steht (backgroundArea.shapeId als Marker gesetzt, siehe Sidebar) UND Shapes
+  // ausgewählt sind. Dann wird das Bild NICHT flächig hinter die Shapes gelegt,
+  // sondern die platzierten Shapes stanzen Löcher in die Hintergrundfarbe, durch
+  // die das Bild hindurchscheint (siehe weiter unten, direkt vor der Shape-
+  // Schleife). Steht es auf "No Shape" (kein Marker), bleibt es beim flächigen
+  // Hintergrundbild wie bisher.
+  const cutoutMode =
+    !!backgroundArea &&
+    !!backgroundArea.shapeId &&
+    !!areaImages &&
+    !!shapeImages?.getSilhouette &&
+    availableShapes.length > 0;
+
+  if (backgroundArea && areaImages && !cutoutMode) {
     const bgImg = areaImages.getBackgroundImage(backgroundArea, innerW, innerH);
     if (bgImg) {
       p5.imageMode(p5.CORNER);
@@ -646,7 +667,23 @@ export function drawGrid(p5: p5Types, params: Params) {
     "border",
     "packing",
   ] as const;
-  const arrangement = ARRANGEMENTS[Math.abs(hashString(`arrangement|${seedParam}`)) % ARRANGEMENTS.length];
+  // Gewichtete Auswahl statt gleichverteilt: "wave" bekommt ein höheres Gewicht
+  // und kommt damit etwas häufiger vor als die übrigen Anordnungen (hier 3 vs.
+  // 2 -> ~20% statt ~14%). Gewicht anpassen, um die Häufigkeit zu justieren.
+  const ARRANGEMENT_WEIGHTS: Record<(typeof ARRANGEMENTS)[number], number> = {
+    scatter: 2,
+    grid: 2,
+    rings: 2,
+    diagonal: 2,
+    wave: 3,
+    border: 2,
+    packing: 2,
+  };
+  const arrangementPool = ARRANGEMENTS.flatMap((a) =>
+    Array<(typeof ARRANGEMENTS)[number]>(ARRANGEMENT_WEIGHTS[a]).fill(a)
+  );
+  const arrangement =
+    arrangementPool[Math.abs(hashString(`arrangement|${seedParam}`)) % arrangementPool.length];
 
   // Bewegungspuffer entsprechend der animierten Verschiebung in motionFor
   // (scatter/border/rings bewegen sich nicht -> 0). Im Einfliegen-Modus (siehe
@@ -1267,7 +1304,7 @@ export function drawGrid(p5: p5Types, params: Params) {
     lastLoggedCompositionKey = `${seedParam}|${activeSide ?? ""}`;
     // eslint-disable-next-line no-console
     console.log(
-      `[grid] seed=${seedParam} side=${activeSide ?? "-"} arrangement=${arrangement} instances=${instances.length} flyIn=${flyInEnabled} combo=${comboModeEnabled}(${chosenCombo.map((p) => p.shapeId).join("+")}) allShapesSelected=${allShapesSelected} selectedShapes=[${selectedShapes.join(",")}] availableShapes=[${availableShapes.join(",")}] logo(enabled=${logoEnabled},hasImage=${logoHasImage},box=${logoBox ? "yes" : "no"})`
+      `[grid] seed=${seedParam} side=${activeSide ?? "-"} arrangement=${arrangement} instances=${instances.length} flyIn=${flyInEnabled} combo=${comboModeEnabled}(${chosenCombo.map((p) => p.shapeId).join("+")}) cutout=${cutoutMode}(bgArea=${backgroundArea ? "yes" : "no"},hasSilhouette=${!!shapeImages?.getSilhouette}) allShapesSelected=${allShapesSelected} selectedShapes=[${selectedShapes.join(",")}] availableShapes=[${availableShapes.join(",")}] logo(enabled=${logoEnabled},hasImage=${logoHasImage},box=${logoBox ? "yes" : "no"})`
     );
     const usedShapeIds = Array.from(new Set(instances.map((i) => i.shapeId).filter((id): id is string => !!id)));
     const leaked = usedShapeIds.filter((id) => !availableShapeIdSet.has(id));
@@ -1426,7 +1463,48 @@ export function drawGrid(p5: p5Types, params: Params) {
   // image() als auch fill()/ellipse() gleichermaßen.
   const shadeCtx = (p5 as unknown as { drawingContext: CanvasRenderingContext2D }).drawingContext;
 
+  // Cutout-Modus: die platzierten Shapes werden NICHT als Punktgitter gezeichnet,
+  // sondern als Aussparung. (1) Jede Shape-Silhouette wird – mit identischer
+  // Position/Drehung/Skalierung/Animation wie beim normalen Zeichnen – als Loch
+  // aus der Hintergrundfarbe ausgestanzt (destination-out). (2) Das
+  // Hintergrundbild wird DAHINTER gelegt (destination-over) und scheint dadurch
+  // nur durch die Shapes hindurch; der Rest bleibt Hintergrundfarbe.
+  if (cutoutMode && shapeImages?.getSilhouette && areaImages && backgroundArea) {
+    shadeCtx.save();
+    shadeCtx.globalCompositeOperation = "destination-out";
+    for (const inst of instances) {
+      if (!inst.shapeId) continue;
+      const sil = shapeImages.getSilhouette(inst.shapeId);
+      if (!sil) continue;
+      const rot = restrictDirection(
+        inst.shapeId,
+        avoidHorizontalRotation(inst.shapeId, inst.baseRot ?? fieldAngle(inst.cx, inst.cy))
+      );
+      const m = motionFor(inst);
+      const natW = (sil as HTMLImageElement).naturalWidth || (sil as HTMLCanvasElement).width || 1;
+      const natH = (sil as HTMLImageElement).naturalHeight || (sil as HTMLCanvasElement).height || 1;
+      const fit = Math.min(inst.size / natW, inst.size / natH);
+      const dw = natW * fit;
+      const dh = natH * fit;
+      shadeCtx.save();
+      shadeCtx.translate(inst.cx + m.dx, inst.cy + m.dy);
+      shadeCtx.rotate(rot + m.dRot);
+      if (m.scale !== 1) shadeCtx.scale(m.scale, m.scale);
+      shadeCtx.drawImage(sil, -dw / 2, -dh / 2, dw, dh);
+      shadeCtx.restore();
+    }
+    shadeCtx.globalCompositeOperation = "destination-over";
+    const bgImg = areaImages.getBackgroundImage(backgroundArea, innerW, innerH);
+    if (bgImg) {
+      const bgCanvas = (bgImg as unknown as { drawingContext: CanvasRenderingContext2D })
+        .drawingContext.canvas;
+      shadeCtx.drawImage(bgCanvas, 0, 0, innerW, innerH);
+    }
+    shadeCtx.restore();
+  }
+
   for (const inst of instances) {
+    if (cutoutMode) break; // Shapes dienen im Cutout-Modus als Aussparung (oben), nicht als Punktgitter
     const { cx, cy, size } = inst;
     // Arrangements mit struktureller Rotation (Truchet/Ringe/Welle/Diagonale)
     // behalten ihr baseRot; freie Elemente (scatter/border) folgen dem

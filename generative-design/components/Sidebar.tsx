@@ -45,6 +45,13 @@ const LOGO_MODE_LABELS: Record<LogoMode, string> = { random: "Random", logo: "Lo
 const ANCHOR_OPTIONS = ALL_ANCHORS.map((a) => ANCHOR_LABELS[a]);
 const NO_SHAPE_LABEL = "No Shape";
 const SHAPE_OPTIONS = [NO_SHAPE_LABEL, ...shapes.map((s) => s.label)];
+const SHAPES_LABEL = "Shapes";
+// Für Hintergrund-Bilder/-Videos: entweder normaler Vollflächen-Hintergrund
+// ("No Shape") oder als Aussparung durch die platzierten Shapes ("Shapes",
+// siehe cutoutMode in algorithms/grid.ts). Der Marker dient dort nur als Flag,
+// ausgestanzt wird mit den tatsächlich platzierten Shapes – nicht mit ihm.
+const BACKGROUND_SHAPE_OPTIONS = [NO_SHAPE_LABEL, SHAPES_LABEL];
+const CUTOUT_SHAPES_ID = "__cutout_shapes__";
 const BACKGROUND_LABEL = "Background";
 const TEXT_STYLE_OPTIONS = Object.keys(TEXT_STYLES) as TextStyleName[];
 
@@ -206,9 +213,12 @@ export default function Sidebar() {
       const payload =
         areaAnchor === "background"
           ? {
-              // Hintergrund-Bild: keine Maske/Shape nötig, füllt den ganzen Rahmen.
+              // Hintergrund-Bild: "No Shape" = normaler Vollflächen-Hintergrund;
+              // "Shapes" (shapeId = Marker) = wird durch die platzierten Shapes
+              // ausgestanzt (siehe cutoutMode in grid.ts).
               kind: "image" as const,
               anchor: "background" as const,
+              shapeId: areaShapeId,
               imageDataUrl: areaImageDataUrl,
               grayscale: areaGrayscale,
               side: formatHasSides ? side : undefined,
@@ -233,9 +243,12 @@ export default function Sidebar() {
       const payload =
         areaAnchor === "background"
           ? {
-              // Hintergrund-Video: keine Maske/Shape nötig, füllt den ganzen Rahmen.
+              // Hintergrund-Video: "No Shape" = normaler Vollflächen-Hintergrund;
+              // "Shapes" (shapeId = Marker) = wird durch die platzierten Shapes
+              // ausgestanzt (siehe cutoutMode in grid.ts).
               kind: "video" as const,
               anchor: "background" as const,
+              shapeId: areaShapeId,
               videoUrl: areaVideoUrl,
               grayscale: areaGrayscale,
               side: formatHasSides ? side : undefined,
@@ -550,16 +563,25 @@ export default function Sidebar() {
             </>
           ) : areaKind === "image" ? (
             <>
-              {areaAnchor !== "background" && (
-                <RulerItem label="Shape">
+              <RulerItem label="Shape">
+                {areaAnchor === "background" ? (
+                  <Dropdown
+                    label="Choose"
+                    value={areaShapeId ? SHAPES_LABEL : NO_SHAPE_LABEL}
+                    fields={BACKGROUND_SHAPE_OPTIONS}
+                    onChange={(label) =>
+                      setAreaShapeId(label === SHAPES_LABEL ? CUTOUT_SHAPES_ID : undefined)
+                    }
+                  />
+                ) : (
                   <Dropdown
                     label="Choose"
                     value={shapes.find((s) => s.id === areaShapeId)?.label ?? NO_SHAPE_LABEL}
                     fields={SHAPE_OPTIONS}
                     onChange={(label) => setAreaShapeId(labelToShapeId(label))}
                   />
-                </RulerItem>
-              )}
+                )}
+              </RulerItem>
               <RulerItem label="Bild">
                 <input
                   ref={fileInputRef}
@@ -597,16 +619,25 @@ export default function Sidebar() {
             </>
           ) : (
             <>
-              {areaAnchor !== "background" && (
-                <RulerItem label="Shape">
+              <RulerItem label="Shape">
+                {areaAnchor === "background" ? (
+                  <Dropdown
+                    label="Choose"
+                    value={areaShapeId ? SHAPES_LABEL : NO_SHAPE_LABEL}
+                    fields={BACKGROUND_SHAPE_OPTIONS}
+                    onChange={(label) =>
+                      setAreaShapeId(label === SHAPES_LABEL ? CUTOUT_SHAPES_ID : undefined)
+                    }
+                  />
+                ) : (
                   <Dropdown
                     label="Choose"
                     value={shapes.find((s) => s.id === areaShapeId)?.label ?? NO_SHAPE_LABEL}
                     fields={SHAPE_OPTIONS}
                     onChange={(label) => setAreaShapeId(labelToShapeId(label))}
                   />
-                </RulerItem>
-              )}
+                )}
+              </RulerItem>
               <RulerItem label="Video">
                 <input
                   ref={fileInputRef}

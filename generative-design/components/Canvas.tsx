@@ -988,6 +988,7 @@ export default function Canvas() {
           getTintedImage(p, id, colorHex, targetSize, paramsRef.current.gridResolution, paramsRef.current.dotSize, time),
         getPatternFill: (w, h, colorHex, excludeRects, time) =>
           getPatternFillImage(p, w, h, colorHex, excludeRects, time),
+        getSilhouette: (id) => rawImages.get(id),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(p, area, w, h),
@@ -1124,6 +1125,7 @@ export default function Canvas() {
           getTintedImage(instance, id, colorHex, targetSize, gridResolution, dotSize, time),
         getPatternFill: (w, h, colorHex, excludeRects, time) =>
           getPatternFillImage(instance, w, h, colorHex, excludeRects, time),
+        getSilhouette: (id) => rawImages.get(id),
       };
       const areaImages: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
@@ -1190,6 +1192,7 @@ export default function Canvas() {
           getTintedImage(instance, id, colorHex, targetSize, params.gridResolution, params.dotSize, time),
         getPatternFill: (w, h, colorHex, excludeRects, time) =>
           getPatternFillImage(instance, w, h, colorHex, excludeRects, time),
+        getSilhouette: (id) => rawImages.get(id),
       };
       const areaImagesLocal: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
@@ -1310,6 +1313,7 @@ export default function Canvas() {
           getTintedImage(instance, id, colorHex, targetSize, params.gridResolution, params.dotSize, time),
         getPatternFill: (w, h, colorHex, excludeRects, time) =>
           getPatternFillImage(instance, w, h, colorHex, excludeRects, time),
+        getSilhouette: (id) => rawImages.get(id),
       };
       const areaImagesLocal: AreaImageProvider = {
         getImage: (area, w, h) => getMaskedAreaImage(instance, area, w, h),
