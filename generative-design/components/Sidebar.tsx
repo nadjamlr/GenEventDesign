@@ -432,7 +432,7 @@ export default function Sidebar() {
         <SeparationLine/>
 
         <RulerSection heading="Colors">
-          <div className="grid grid-cols-6 gap-2 px-2">
+          <div className="grid grid-cols-6 gap-2 px-2 mt-2">
             {colors.map((color) => (
               <ColorButton
                 key={color.id}
@@ -442,20 +442,22 @@ export default function Sidebar() {
               />
             ))}
           </div>
-          <RulerItem label="Hex">
-            <Inputfield
-              placeholder="#2F00FF"
-              value={hexInput}
-              onChange={setHexInput}
-              onEnter={handleHexEnter}
-            />
-          </RulerItem>
+          <div className="mt-2">
+            <RulerItem label="Hex">
+              <Inputfield
+                placeholder="#2F00FF"
+                value={hexInput}
+                onChange={setHexInput}
+                onEnter={handleHexEnter}
+              />
+            </RulerItem>
+          </div>
         </RulerSection>
 
         <SeparationLine/>
 
         <RulerSection heading="Shape">
-          <div className="grid grid-cols-3 gap-2 px-2">
+          <div className="grid grid-cols-3 gap-2 px-2 mt-2">
             {shapes.map((shape) => (
               <ShapeButton
                 key={shape.id}
@@ -466,15 +468,17 @@ export default function Sidebar() {
               />
             ))}
           </div>
-          <RulerItem label="Grid">
-            <Slider range={10} defaultValue={gridResolution} onChange={setGridResolution} />
-          </RulerItem>
-          <RulerItem label="Dots">
-            <Slider range={10} defaultValue={dotSize} onChange={setDotSize} />
-          </RulerItem>
-          <RulerItem label="Texture">
-            <Slider range={10} defaultValue={dotVariation} onChange={setDotVariation} />
-          </RulerItem>
+          <div className="mt-4">
+            <RulerItem label="Grid">
+              <Slider range={10} defaultValue={gridResolution} onChange={setGridResolution} />
+            </RulerItem>
+            <RulerItem label="Dots">
+              <Slider range={10} defaultValue={dotSize} onChange={setDotSize} />
+            </RulerItem>
+            <RulerItem label="Texture">
+              <Slider range={10} defaultValue={dotVariation} onChange={setDotVariation} />
+            </RulerItem>
+          </div>
         </RulerSection>
 
         {formatSupportsAreas(format) && (

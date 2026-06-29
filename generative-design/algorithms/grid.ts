@@ -116,6 +116,18 @@ function hashString(str: string): number {
   return hash;
 }
 
+type Rect = { x: number; y: number; w: number; h: number };
+
+/** Schnittfläche zweier Rechtecke, oder undefined wenn sie sich nicht überlappen. */
+function intersectRect(a: Rect, b: Rect): Rect | undefined {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.w, b.x + b.w);
+  const y2 = Math.min(a.y + a.h, b.y + b.h);
+  if (x2 <= x1 || y2 <= y1) return undefined;
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+}
+
 // Einfacher seeded PRNG (LCG), damit das Muster bei gleichen Parametern
 // stabil bleibt, sich aber ändert, sobald Shapes/Colors/Grid/Seed sich ändern.
 function createRng(seed: number) {
@@ -1377,17 +1389,33 @@ export function drawGrid(p5: p5Types, params: Params) {
     const showPattern = Math.abs(hashString(`noshapebg|${seedParam}`)) % 2 === 0;
     if (showPattern && shapeImages?.getPatternFill) {
       const patternColorPool = colorPool.length > 0 ? colorPool : [FALLBACK_COLOR];
-      const patternColor = patternColorPool[Math.floor(rng() * patternColorPool.length)];
-      const patternImg = shapeImages.getPatternFill(
-        innerW,
-        innerH,
-        patternColor,
-        exclusionRects,
-        animate ? phase : undefined
-      );
-      if (patternImg) {
-        p5.imageMode(p5.CORNER);
-        p5.image(patternImg, innerX, innerY, innerW, innerH);
+      // Statt EINER Fläche über die ganze Canvas: ein paar zufällig verteilte,
+      // unterschiedlich große Flecken ("Patches"), damit das Muster nur in
+      // TEILEN des Bilds auftaucht statt überall. Jeder Patch bekommt sein
+      // eigenes Muster-Bild (eigene lokale Aussparungen, siehe intersectRect)
+      // und eine eigene Zufallsfarbe aus dem Farbpool.
+      const patchCount = 2 + Math.floor(rng() * 3); // 2..4
+      for (let i = 0; i < patchCount; i++) {
+        const patchW = innerW * (0.25 + rng() * 0.35);
+        const patchH = innerH * (0.2 + rng() * 0.35);
+        const patchX = rng() * Math.max(0, innerW - patchW);
+        const patchY = rng() * Math.max(0, innerH - patchH);
+        const localExclusionRects = exclusionRects
+          .map((r) => intersectRect(r, { x: patchX, y: patchY, w: patchW, h: patchH }))
+          .filter((r): r is Rect => !!r)
+          .map((r) => ({ x: r.x - patchX, y: r.y - patchY, w: r.w, h: r.h }));
+        const patternColor = patternColorPool[Math.floor(rng() * patternColorPool.length)];
+        const patternImg = shapeImages.getPatternFill(
+          patchW,
+          patchH,
+          patternColor,
+          localExclusionRects,
+          animate ? phase : undefined
+        );
+        if (patternImg) {
+          p5.imageMode(p5.CORNER);
+          p5.image(patternImg, innerX + patchX, innerY + patchY, patchW, patchH);
+        }
       }
     }
   }
